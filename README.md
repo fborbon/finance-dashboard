@@ -4,7 +4,20 @@ A personal finance dashboard that consolidates movements from multiple bank acco
 
 Built with **Python · Pandas · Streamlit · Plotly**.
 
-![Dashboard overview](https://img.shields.io/badge/Streamlit-1.57-red) ![Python](https://img.shields.io/badge/Python-3.12-blue)
+![Streamlit](https://img.shields.io/badge/Streamlit-1.57-red) ![Python](https://img.shields.io/badge/Python-3.12-blue)
+
+---
+
+## Screenshots
+
+### Overview — balance timeline & monthly cash flow across all banks
+![Overview](docs/screenshot_overview.png)
+
+### Per-bank view — balance over time & expenses by category
+![Bank1 Charts](docs/screenshot_bank1_charts.png)
+
+### Per-bank movements table — editable category per row
+![Bank1 Movements](docs/screenshot_bank1_movements.png)
 
 ---
 
