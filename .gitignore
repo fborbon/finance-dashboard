@@ -1,0 +1,21 @@
+# Real bank data — never commit
+Rural/
+Caixa/
+Revo/
+
+# User-specific category overrides (personal data)
+category_overrides.json
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
