@@ -29,7 +29,7 @@ Built with **Python · Pandas · Streamlit · Plotly · NumPy**.
 - **Multi-bank support** — loads data from three banks with different file formats:
   - Bank1: one `.xlsx` file per year
   - Bank2: single multi-column `.xlsx` export (25 columns, split income/expense)
-  - Bank3: single `.csv` export (Revolut-style)
+  - Bank3: single `.csv` export
 - **Automatic format detection** — column names are detected by keyword so new exports work without code changes
 - **Per-bank tabs** with:
   - Movements table with an editable **Category dropdown** per row
@@ -84,7 +84,7 @@ Each bank exports data in a different format. A dedicated loader handles each on
 |---|---|---|
 | `load_bank1()` | `Bank1/*.xlsx` | One file per year. Columns detected by keyword (`fecha`, `concepto`, `importe`, `saldo`). Date format varies: `MM/DD/YYYY` for 2020, `DD/MM/YYYY` for all later files. |
 | `load_bank2()` | `Bank2/*.xlsx` | Single file spanning multiple years. Two layouts are handled: a 25-column modern format with separate income/expense columns, and an older 6-column format. The header row is located dynamically by scanning for keyword markers. |
-| `load_bank3()` | `Bank3/all.csv` | Revolut-style CSV. Only `State == "COMPLETED"` rows are kept. The `Type` column (Topup, ATM, Card Refund, Exchange) is used to assign categories directly, bypassing keyword matching. |
+| `load_bank3()` | `Bank3/all.csv` | CSV export. Only `State == "COMPLETED"` rows are kept. The `Type` column (Topup, ATM, Card Refund, Exchange) is used to assign categories directly, bypassing keyword matching. |
 
 ### 2 — Normalisation (`load_all()`)
 
@@ -127,7 +127,7 @@ flowchart TD
     subgraph FILES["📁 Input files"]
         F1["Bank1/*.xlsx\none file per year"]
         F2["Bank2/2024-2026.xlsx\n25-column format"]
-        F3["Bank3/all.csv\nRevolut CSV"]
+        F3["Bank3/all.csv\nCSV export"]
         F4["categories.json"]
         F5["category_overrides.json"]
     end
@@ -229,25 +229,6 @@ More complex models (ARIMA, Prophet, LSTM) would require substantially more hist
 | `MIN_MONTHS` | `2` | Minimum monthly data points to produce any prediction for a category. |
 | `TREND_MIN` | `4` | Minimum points to fit a trend line; below this the mean is used instead. |
 | `deg` | `1` | Polynomial degree passed to `np.polyfit` — enforces a straight-line fit. |
-
----
-
-## RAG knowledge base — what it is and how it could extend this project
-
-**RAG** (Retrieval-Augmented Generation) is an architecture that pairs a **vector search index** with a **large language model (LLM)**. Instead of asking an LLM to answer from its training weights alone, RAG first retrieves the most relevant documents (or rows) from a private knowledge base and injects them into the prompt as grounded context. The LLM then generates an answer that is both factually anchored and specific to the user's own data.
-
-*This project does not currently implement RAG.* If it did, a natural integration would be:
-
-1. **Index**: embed every transaction row (date, concept, amount, category) as a vector using a sentence-embedding model (e.g. `sentence-transformers`). Store the vectors in a lightweight local index such as FAISS or ChromaDB.
-2. **Retrieve**: when a user types a question in natural language — *"How much did I spend on restaurants in Q1 2025 compared to Q1 2024?"* — convert the question to an embedding and retrieve the closest matching transactions.
-3. **Generate**: pass the retrieved transactions plus the question to an LLM (e.g. the Claude or OpenAI API). The LLM summarises the data and answers the question in plain language.
-
-**Why it would be useful here:**
-
-- Natural-language queries over transaction history without SQL or chart navigation.
-- Automatic narrative summaries: *"Your supermarket spend has risen 12 % year-on-year, largely driven by March and November spikes."*
-- Anomaly explanations: *"You had an unusually high utilities bill in September 2024 — the only month it exceeded €200."*
-- The transactions dataset is small enough (a few thousand rows) that a local vector store requires no cloud infrastructure or API costs.
 
 ---
 
