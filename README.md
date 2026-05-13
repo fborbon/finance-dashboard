@@ -16,6 +16,9 @@ Built with **Python · Pandas · Streamlit · Plotly**.
 ### Per-bank view — balance over time & expenses by category
 ![Bank1 Charts](docs/screenshot_bank1_charts.png)
 
+### Per-bank next-month predictions — income & expenses by category
+![Bank1 Predictions](docs/screenshot_bank1_predictions.png)
+
 ### Per-bank movements table — editable category per row
 ![Bank1 Movements](docs/screenshot_bank1_movements.png)
 
@@ -31,6 +34,7 @@ Built with **Python · Pandas · Streamlit · Plotly**.
 - **Per-bank tabs** with:
   - Movements table with an editable **Category dropdown** per row
   - Balance over time, expense pie chart, monthly cash flow
+  - **Next-month predictions** — predicted income and expenses by category using a linear-trend ML model trained on the last 24 months of data
 - **Overview tab** — combined balance timeline, monthly net flow, expense & income breakdowns
 - **Persistent category overrides** — manual category assignments are saved to disk and survive restarts
 - **Category manager** — add or remove spending categories from the UI
@@ -41,7 +45,7 @@ Built with **Python · Pandas · Streamlit · Plotly**.
 
 ```bash
 # 1. Install dependencies
-pip install streamlit pandas plotly openpyxl xlrd
+pip install streamlit pandas plotly openpyxl xlrd numpy
 
 # 2. Generate dummy data (or drop your real files into Bank1/, Bank2/, Bank3/)
 python generate_dummy_data.py
@@ -59,6 +63,7 @@ Open http://localhost:8501 in your browser.
 ```
 ├── app.py                   # Streamlit dashboard
 ├── data_loader.py           # Data loading & normalisation for all three banks
+├── predictor.py             # ML next-month predictions per category (linear trend)
 ├── generate_dummy_data.py   # Generates realistic sample data for demo
 ├── categories.json          # Editable list of spending categories
 ├── category_overrides.json  # User-assigned category overrides (auto-created, gitignored)

@@ -7,6 +7,7 @@ import plotly.express as px
 import streamlit as st
 
 from data_loader import load_all
+from predictor import predict_next_month
 
 st.set_page_config(page_title="Bank Dashboard", layout="wide", page_icon="💳")
 
@@ -166,6 +167,49 @@ def render_charts(bank_df: pd.DataFrame, bank: str):
                   color_discrete_sequence=[color], labels={"amount": "€", "month": ""})
     fig3.add_hline(y=0, line_width=1, line_color="gray")
     st.plotly_chart(fig3, use_container_width=True)
+
+    st.divider()
+    st.subheader("Next month predictions")
+
+    preds = predict_next_month(df[df["bank"] == bank])
+    next_month = (pd.Timestamp.now().to_period("M") + 1).to_timestamp().strftime("%B %Y")
+    st.caption(f"Estimated totals for **{next_month}** · linear trend over last 24 months · "
+               "categories with < 2 months of data excluded")
+
+    col_pl, col_pr = st.columns(2)
+    with col_pl:
+        st.markdown("**Predicted income by category**")
+        if preds["income"]:
+            inc_df = (
+                pd.DataFrame(preds["income"].items(), columns=["category", "amount"])
+                .sort_values("amount", ascending=True)
+            )
+            fig_pi = px.bar(
+                inc_df, x="amount", y="category", orientation="h",
+                color_discrete_sequence=["#2ca02c"],
+                labels={"amount": "€", "category": ""},
+            )
+            fig_pi.update_layout(margin={"l": 0, "r": 0, "t": 10, "b": 0})
+            st.plotly_chart(fig_pi, use_container_width=True)
+        else:
+            st.info("Not enough history for income predictions.")
+
+    with col_pr:
+        st.markdown("**Predicted expenses by category**")
+        if preds["expenses"]:
+            exp_df = (
+                pd.DataFrame(preds["expenses"].items(), columns=["category", "amount"])
+                .sort_values("amount", ascending=True)
+            )
+            fig_pe = px.bar(
+                exp_df, x="amount", y="category", orientation="h",
+                color_discrete_sequence=["#d62728"],
+                labels={"amount": "€", "category": ""},
+            )
+            fig_pe.update_layout(margin={"l": 0, "r": 0, "t": 10, "b": 0})
+            st.plotly_chart(fig_pe, use_container_width=True)
+        else:
+            st.info("Not enough history for expense predictions.")
 
 
 # ── Overview charts ───────────────────────────────────────────────────────────
