@@ -14,14 +14,14 @@ A personal finance dashboard that consolidates movements from multiple bank acco
 
 1. [Screenshots](#screenshots)
 2. [Features](#features)
-3. [Quick Start](#quick-start)
-4. [Project Structure](#project-structure)
-5. [Data Processing Pipeline](#data-processing-pipeline)
-6. [Architecture & Data Flow](#architecture--data-flow)
+3. [Quick start](#quick-start)
+4. [Project structure](#project-structure)
+5. [Data processing pipeline](#data-processing-pipeline)
+6. [Architecture & data flow](#architecture--data-flow)
 7. [Libraries](#libraries)
-8. [Machine Learning Model](#machine-learning-model)
-9. [Adding Your Own Bank Data](#adding-your-own-bank-data)
-10. [Data Privacy](#data-privacy)
+8. [Machine Learning model](#machine-learning-model)
+9. [Adding your own bank data](#adding-your-own-bank-data)
+10. [Data privacy](#data-privacy)
 11. [Auditing](#auditing)
 
 ---
