@@ -1,10 +1,28 @@
-# Bank Accounting Dashboard
+# Personal Finance Dashboard
 
-A personal finance dashboard that consolidates movements from multiple bank accounts into a single interactive view — with automatic categorisation, persistent user overrides, and ML-powered next-month predictions.
+A personal finance dashboard that consolidates movements from multiple bank accounts into a single interactive view — with automatic categorisation, persistent user overrides, and ML-powered next-month predictions. The dashboard eliminates the manual work of reconciling exports from three different banks with incompatible formats: a unified loader detects columns automatically, assigns spending categories via keyword rules, and lets you override any classification with a single click that survives app restarts. A lightweight linear-regression model then extrapolates next-month income and expenses per category, giving a forward-looking view alongside the historical charts.
 
-Built with **Python · Pandas · Streamlit · Plotly · NumPy**.
+**Main technologies:** Python · Streamlit · Pandas · Plotly Express · NumPy · openpyxl / xlrd
+
+**Monthly cost:** $0. The dashboard runs entirely on your local machine with no cloud services, no APIs, and no paid subscriptions. All bank data stays local.
 
 ![Streamlit](https://img.shields.io/badge/Streamlit-1.57-red) ![Python](https://img.shields.io/badge/Python-3.12-blue)
+
+---
+
+## Table of Contents
+
+1. [Screenshots](#screenshots)
+2. [Features](#features)
+3. [Quick Start](#quick-start)
+4. [Project Structure](#project-structure)
+5. [Data Processing Pipeline](#data-processing-pipeline)
+6. [Architecture & Data Flow](#architecture--data-flow)
+7. [Libraries](#libraries)
+8. [Machine Learning Model](#machine-learning-model)
+9. [Adding Your Own Bank Data](#adding-your-own-bank-data)
+10. [Data Privacy](#data-privacy)
+11. [Auditing](#auditing)
 
 ---
 
