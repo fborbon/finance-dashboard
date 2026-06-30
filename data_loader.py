@@ -226,6 +226,10 @@ def _load_bank2_file(path: Path) -> pd.DataFrame:
             (c for c in headers if isinstance(c, str)
              and any(k in c.lower() for k in ("gasto", "expense"))), None
         )
+        amount_col = next(
+            (c for c in headers if isinstance(c, str)
+             and any(k in c.lower() for k in ("importe", "cantidad", "movimiento", "amount"))), None
+        )
         balance_col = next(
             (c for c in headers if isinstance(c, str)
              and any(k in c.lower() for k in ("saldo (+)", "balance (+)", "saldo", "balance"))),
@@ -250,8 +254,14 @@ def _load_bank2_file(path: Path) -> pd.DataFrame:
             inc = pd.to_numeric(data[income_col], errors="coerce").fillna(0)
             exp = pd.to_numeric(data[expense_col], errors="coerce").fillna(0)
             data["amount"] = inc - exp
-        else:
+        elif income_col or expense_col:
             data["amount"] = pd.to_numeric(data[income_col or expense_col], errors="coerce")
+        elif amount_col:
+            data["amount"] = pd.to_numeric(data[amount_col], errors="coerce")
+        else:
+            raise ValueError(
+                f"Cannot find amount column in {path.name}. Headers found: {headers}"
+            )
 
         data["balance"] = pd.to_numeric(data[balance_col], errors="coerce")
 
