@@ -1,3 +1,4 @@
+import hashlib
 import pandas as pd
 from pathlib import Path
 
@@ -113,6 +114,39 @@ def _categorize(concept: str) -> str:
     return "other"
 
 
+# ── Deduplication helper ──────────────────────────────────────────────────────
+
+def _dedup(df: pd.DataFrame) -> pd.DataFrame:
+    """Drop duplicate transactions using a stable bank|date|concept|amount hash."""
+    ids = df.apply(
+        lambda r: hashlib.md5(
+            f"{r['bank']}|{pd.Timestamp(r['date']).isoformat()}|{r['concept']}|{r['amount']}".encode()
+        ).hexdigest(),
+        axis=1,
+    )
+    return df[~ids.duplicated(keep="first")].reset_index(drop=True)
+
+
+# ── Revolut CSV helper (shared by Bank3 and Revo) ────────────────────────────
+
+def _load_revolut_csv(path: Path, bank_name: str) -> pd.DataFrame:
+    df = pd.read_csv(path)
+    if "State" not in df.columns:
+        return pd.DataFrame(columns=["date", "concept", "amount", "balance", "bank", "category"])
+    df = df[df["State"] == "COMPLETED"].copy()
+    df["date"]     = pd.to_datetime(df["Started Date"], errors="coerce")
+    df["concept"]  = df["Description"].astype(str).str.strip()
+    df["amount"]   = pd.to_numeric(df["Amount"],  errors="coerce")
+    df["balance"]  = pd.to_numeric(df["Balance"], errors="coerce")
+    df["bank"]     = bank_name
+    df["category"] = df["concept"].apply(_categorize)
+    df.loc[df["Type"] == "Topup",       "category"] = "own transfer"
+    df.loc[df["Type"] == "ATM",         "category"] = "atm"
+    df.loc[df["Type"] == "Card Refund", "category"] = "refund"
+    df.loc[df["Type"] == "Exchange",    "category"] = "exchange"
+    return df[["date", "concept", "amount", "balance", "bank", "category"]]
+
+
 # ── Bank1 loader (xlsx per year) ──────────────────────────────────────────────
 
 def _load_bank1_file(path: Path) -> pd.DataFrame:
@@ -149,7 +183,7 @@ def load_bank1() -> pd.DataFrame:
     df = pd.concat(dfs, ignore_index=True)
     df["concept"] = df["concept"].astype(str).str.strip()
     df["category"] = df["concept"].apply(_categorize)
-    return df.dropna(subset=["date"]).sort_values("date").reset_index(drop=True)
+    return _dedup(df.dropna(subset=["date"]).sort_values("date").reset_index(drop=True))
 
 
 # ── Bank2 loader (multi-column xlsx/xls) ─────────────────────────────────────
@@ -175,10 +209,15 @@ def _load_bank2_file(path: Path) -> pd.DataFrame:
         data = data.dropna(how="all").reset_index(drop=True)
 
         date_col = next(
-            c for c in headers
-            if isinstance(c, str)
-            and any(k in c.lower() for k in ("f. operaci", "operaci", "operation date", "operation"))
+            (c for c in headers
+             if isinstance(c, str)
+             and any(k in c.lower() for k in ("f. operaci", "operaci", "operation date", "operation", "fecha"))),
+            None
         )
+        if date_col is None:
+            raise ValueError(
+                f"Cannot find date column in {path.name}. Headers found: {headers}"
+            )
         income_col = next(
             (c for c in headers if isinstance(c, str)
              and any(k in c.lower() for k in ("ingreso", "income"))), None
@@ -189,10 +228,13 @@ def _load_bank2_file(path: Path) -> pd.DataFrame:
         )
         balance_col = next(
             (c for c in headers if isinstance(c, str)
-             and any(k in c.lower() for k in ("saldo (+)", "balance (+)"))),
-            next(c for c in headers if isinstance(c, str)
-                 and any(k in c.lower() for k in ("saldo", "balance")))
+             and any(k in c.lower() for k in ("saldo (+)", "balance (+)", "saldo", "balance"))),
+            None
         )
+        if balance_col is None:
+            raise ValueError(
+                f"Cannot find balance column in {path.name}. Headers found: {headers}"
+            )
         comp1_col = next(
             (c for c in headers if isinstance(c, str)
              and any(k in c.lower() for k in ("complementario 1", "description 1"))), None
@@ -248,35 +290,78 @@ def load_bank2() -> pd.DataFrame:
     df["bank"] = "Bank2"
     df["concept"] = df["concept"].astype(str).str.strip()
     df["category"] = df["concept"].apply(_categorize)
-    return df.dropna(subset=["date", "amount"]).sort_values("date").reset_index(drop=True)
+    return _dedup(df.dropna(subset=["date", "amount"]).sort_values("date").reset_index(drop=True))
 
 
-# ── Bank3 loader (csv) ────────────────────────────────────────────────────────
+# ── Bank3 loader (csv — multiple files supported) ────────────────────────────
 
 def load_bank3() -> pd.DataFrame:
-    df = pd.read_csv(BASE / "Bank3" / "all.csv")
-    df = df[df["State"] == "COMPLETED"].copy()
-    df["date"]    = pd.to_datetime(df["Started Date"], errors="coerce")
-    df["concept"] = df["Description"].astype(str).str.strip()
-    df["amount"]  = df["Amount"]
-    df["balance"] = df["Balance"]
-    df["bank"]    = "Bank3"
+    parts = [_load_revolut_csv(p, "Bank3")
+             for p in sorted((BASE / "Bank3").glob("*.csv"))]
+    df = pd.concat(parts, ignore_index=True)
+    return _dedup(df.dropna(subset=["date", "amount"]).sort_values("date").reset_index(drop=True))
+
+
+# ── Real bank loaders (Rural / Caixa / Revo) ─────────────────────────────────
+
+def load_rural() -> pd.DataFrame:
+    dfs = [_load_bank1_file(p) for p in sorted(BASE.glob("Rural/*.xls*"))]
+    df = pd.concat(dfs, ignore_index=True)
+    df["bank"] = "Rural"
+    df["concept"] = df["concept"].astype(str).str.strip()
     df["category"] = df["concept"].apply(_categorize)
-    df.loc[df["Type"] == "Topup",      "category"] = "own transfer"
-    df.loc[df["Type"] == "ATM",        "category"] = "atm"
-    df.loc[df["Type"] == "Card Refund","category"] = "refund"
-    df.loc[df["Type"] == "Exchange",   "category"] = "exchange"
-    return (df[["date", "concept", "amount", "balance", "bank", "category"]]
-            .dropna(subset=["date", "amount"])
-            .sort_values("date")
-            .reset_index(drop=True))
+    return _dedup(df.dropna(subset=["date"]).sort_values("date").reset_index(drop=True))
+
+
+def load_caixa() -> pd.DataFrame:
+    paths = [p for p in (BASE / "Caixa").iterdir()
+             if p.suffix.lower() in (".xls", ".xlsx")]
+    dfs = [_load_bank2_file(p) for p in sorted(paths)]
+    df = pd.concat(dfs, ignore_index=True)
+    df["bank"] = "Caixa"
+    df["concept"] = df["concept"].astype(str).str.strip()
+    df["category"] = df["concept"].apply(_categorize)
+    return _dedup(df.dropna(subset=["date", "amount"]).sort_values("date").reset_index(drop=True))
+
+
+def load_revo() -> pd.DataFrame:
+    parts = [_load_revolut_csv(p, "Revo")
+             for p in sorted((BASE / "Revo").glob("*.csv"))]
+    df = pd.concat(parts, ignore_index=True)
+    return _dedup(df.dropna(subset=["date", "amount"]).sort_values("date").reset_index(drop=True))
 
 
 # ── Combined loader ───────────────────────────────────────────────────────────
 
 def load_all() -> pd.DataFrame:
-    df = pd.concat([load_bank1(), load_bank2(), load_bank3()], ignore_index=True)
-    df["amount"]  = pd.to_numeric(df["amount"], errors="coerce")
+    parts: list[pd.DataFrame] = []
+
+    # Per-year xlsx/xls — prefer Rural (real) over Bank1 (demo)
+    if list(BASE.glob("Rural/*.xls*")):
+        parts.append(load_rural())
+    elif list(BASE.glob("Bank1/*.xls*")):
+        parts.append(load_bank1())
+
+    # Multi-year xlsx/xls — prefer Caixa (real) over Bank2 (demo)
+    caixa_dir = BASE / "Caixa"
+    caixa_files = ([p for p in caixa_dir.iterdir()
+                    if p.suffix.lower() in (".xls", ".xlsx")]
+                   if caixa_dir.exists() else [])
+    bank2_dir = BASE / "Bank2"
+    if caixa_files:
+        parts.append(load_caixa())
+    elif bank2_dir.exists() and [p for p in bank2_dir.iterdir()
+                                  if p.suffix.lower() in (".xls", ".xlsx")]:
+        parts.append(load_bank2())
+
+    # CSV — prefer Revo (real) over Bank3 (demo)
+    if list((BASE / "Revo").glob("*.csv")):
+        parts.append(load_revo())
+    elif list((BASE / "Bank3").glob("*.csv")):
+        parts.append(load_bank3())
+
+    df = pd.concat(parts, ignore_index=True)
+    df["amount"]  = pd.to_numeric(df["amount"],  errors="coerce")
     df["balance"] = pd.to_numeric(df["balance"], errors="coerce")
     df["date"]    = pd.to_datetime(df["date"]).dt.tz_localize(None)
     return df.sort_values("date").reset_index(drop=True)

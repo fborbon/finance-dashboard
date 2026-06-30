@@ -1,0 +1,74 @@
+name: Deploy to EC2
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '*.py'
+      - 'categories.json'
+      - 'config.toml'
+      - 'requirements.txt'
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    name: Rsync + restart service
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/deploy.pem
+          chmod 600 ~/.ssh/deploy.pem
+          ssh-keyscan -H 54.78.82.101 >> ~/.ssh/known_hosts
+
+      - name: Sync code to EC2
+        run: |
+          rsync -az --progress \
+            -e "ssh -i ~/.ssh/deploy.pem" \
+            --exclude "__pycache__" \
+            --exclude "*.pyc" \
+            --exclude "venv/" \
+            --exclude ".venv/" \
+            --exclude "*.egg-info/" \
+            --exclude "category_overrides.json" \
+            --exclude "Bank1/" \
+            --exclude "Bank2/" \
+            --exclude "Bank3/" \
+            --exclude "Rural/" \
+            --exclude "Caixa/" \
+            --exclude "Revo/" \
+            --exclude "static/" \
+            --exclude "deploy/" \
+            --exclude "docs/" \
+            --exclude ".github/" \
+            --exclude "*.ipynb" \
+            ./ ubuntu@54.78.82.101:/home/ubuntu/finance-dashboard/
+
+      - name: Install/update dependencies
+        run: |
+          ssh -i ~/.ssh/deploy.pem ubuntu@54.78.82.101 bash <<'REMOTE'
+            cd ~/finance-dashboard
+            source venv/bin/activate
+            if [[ -f requirements.txt ]]; then
+              pip install --quiet -r requirements.txt
+            fi
+          REMOTE
+
+      - name: Restart service
+        run: |
+          ssh -i ~/.ssh/deploy.pem ubuntu@54.78.82.101 \
+            "sudo systemctl restart finance-dashboard"
+
+      - name: Health check
+        run: |
+          sleep 5
+          ssh -i ~/.ssh/deploy.pem ubuntu@54.78.82.101 bash <<'REMOTE'
+            status=$(systemctl is-active finance-dashboard)
+            echo "Service: $status"
+            curl -sf http://localhost:8502/app/_stcore/health && echo " — health OK" || echo " — health FAIL"
+            [[ "$status" == "active" ]] || exit 1
+          REMOTE
