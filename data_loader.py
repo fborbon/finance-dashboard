@@ -228,7 +228,7 @@ def _load_bank2_file(path: Path) -> pd.DataFrame:
         )
         amount_col = next(
             (c for c in headers if isinstance(c, str)
-             and any(k in c.lower() for k in ("importe", "cantidad", "movimiento", "amount"))), None
+             and any(k in c.lower() for k in ("importe", "cantidad", "amount"))), None
         )
         balance_col = next(
             (c for c in headers if isinstance(c, str)
@@ -241,11 +241,11 @@ def _load_bank2_file(path: Path) -> pd.DataFrame:
             )
         comp1_col = next(
             (c for c in headers if isinstance(c, str)
-             and any(k in c.lower() for k in ("complementario 1", "description 1"))), None
+             and any(k in c.lower() for k in ("complementario 1", "description 1", "movimiento"))), None
         )
         comp3_col = next(
             (c for c in headers if isinstance(c, str)
-             and any(k in c.lower() for k in ("complementario 3", "description 3"))), None
+             and any(k in c.lower() for k in ("complementario 3", "description 3", "más datos", "mas datos", "details"))), None
         )
 
         data["date"] = pd.to_datetime(data[date_col], dayfirst=True, errors="coerce")
