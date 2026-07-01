@@ -117,13 +117,17 @@ def _categorize(concept: str) -> str:
 # ── Deduplication helper ──────────────────────────────────────────────────────
 
 def _dedup(df: pd.DataFrame) -> pd.DataFrame:
-    """Drop duplicate transactions using a stable bank|date|concept|amount hash."""
-    ids = df.apply(
-        lambda r: hashlib.md5(
-            f"{r['bank']}|{pd.Timestamp(r['date']).isoformat()}|{r['concept']}|{r['amount']}".encode()
-        ).hexdigest(),
-        axis=1,
-    )
+    # Key: bank + date + amount + balance (2 dp each).
+    # Balance is the running total after each transaction, so it uniquely
+    # identifies an event in an account even when concept text differs across
+    # file formats (e.g. old vs new Caixa export covering the same period).
+    # Falls back to including concept when balance is NaN (Revolut-style CSVs).
+    def _row_key(r):
+        bal = r["balance"]
+        bal_str = f"{bal:.2f}" if pd.notna(bal) else str(r["concept"])
+        return f"{r['bank']}|{pd.Timestamp(r['date']).isoformat()}|{r['amount']:.2f}|{bal_str}"
+
+    ids = df.apply(lambda r: hashlib.md5(_row_key(r).encode()).hexdigest(), axis=1)
     return df[~ids.duplicated(keep="first")].reset_index(drop=True)
 
 
