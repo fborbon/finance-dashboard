@@ -416,7 +416,6 @@ def render_movements(bank_df: pd.DataFrame, bank: str):
         save_overrides(st.session_state.overrides)
         if apply_all and total_matched > 0:
             st.toast(t("apply_all_toast", n=total_matched), icon="✅")
-        st.rerun()
 
     # Sentinel selected → open popup dialog to name the new category
     if sentinel_sel.any():
@@ -693,56 +692,48 @@ components.html("""
     if (parent.window._agScrollGuardInit) return;
     parent.window._agScrollGuardInit = true;
 
-    var timer;
+    var saved   = null;   // { vp, top }
+    var watchId = null;
+    var mutTid  = null;
 
-    function firstRow(root) {
-        try {
-            var api = root && root.api;
-            if (!api) return null;
-            if (typeof api.getFirstDisplayedRowIndex === 'function') return api.getFirstDisplayedRowIndex();
-            if (typeof api.getFirstDisplayedRow    === 'function') return api.getFirstDisplayedRow();
-        } catch (_) {}
-        return null;
-    }
-
-    // Save which grid and which first-visible row the user clicked on
+    // Capture scroll position on any cell interaction
     parent.document.addEventListener('mousedown', function (e) {
-        var root = e.target.closest && e.target.closest('.ag-root-wrapper');
+        if (!e.target.closest) return;
+        var root = e.target.closest('.ag-root-wrapper');
         if (!root) return;
-        var row = firstRow(root);
-        if (row != null) parent.window._agSS = { root: root, row: row, tries: 0 };
+        var vp = root.querySelector('.ag-body-viewport');
+        if (vp) saved = { vp: vp, top: vp.scrollTop };
     }, true);
 
-    function restore() {
-        var s = parent.window._agSS;
-        if (!s) return;
-        s.tries++;
-        try {
-            var api = s.root.api;
-            if (api && typeof api.ensureIndexVisible === 'function') {
-                api.ensureIndexVisible(s.row, 'top');
-                setTimeout(function () {
-                    var now = firstRow(s.root);
-                    if (now != null && Math.abs(now - s.row) <= 1) {
-                        parent.window._agSS = null;        // success
-                    } else if (s.tries < 6) {
-                        setTimeout(restore, 100);           // AG Grid overrode us, retry
-                    } else {
-                        parent.window._agSS = null;
-                    }
-                }, 80);
-                return;
+    function startWatchdog() {
+        clearInterval(watchId);
+        var s = saved;
+        if (!s || s.top < 5) return;          // already at top, nothing to do
+        var t0 = Date.now(), ticks = 0;
+        watchId = setInterval(function () {
+            ticks++;
+            var elapsed = Date.now() - t0;
+            if (!saved || ticks > 80 || elapsed > 4000) {
+                clearInterval(watchId); watchId = null; return;
             }
-        } catch (_) {}
-        if (s.tries < 6) setTimeout(restore, 150);
-        else parent.window._agSS = null;
+            var cur = s.vp.scrollTop;
+            if (cur < 5 && s.top > 30 && elapsed < 2000) {
+                // Scroll jumped to top within 2 s of a rerun → restore
+                s.vp.scrollTop = s.top;
+            } else if (Math.abs(cur - s.top) > 30) {
+                // User intentionally scrolled → accept new position and stop
+                saved = null;
+                clearInterval(watchId); watchId = null;
+            }
+        }, 50);
     }
 
+    // Trigger watchdog after significant DOM changes (Streamlit rerun)
     new MutationObserver(function (muts) {
-        if (!parent.window._agSS) return;
+        if (!saved) return;
         var n = 0;
         for (var i = 0; i < muts.length; i++) n += muts[i].addedNodes.length;
-        if (n > 3) { clearTimeout(timer); timer = setTimeout(restore, 300); }
+        if (n > 3) { clearTimeout(mutTid); mutTid = setTimeout(startWatchdog, 150); }
     }).observe(parent.document.body, { childList: true, subtree: true });
 })();
 </script>
