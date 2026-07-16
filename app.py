@@ -363,7 +363,6 @@ def render_movements(bank_df: pd.DataFrame, bank: str):
         save_overrides(st.session_state.overrides)
         if apply_all and total_matched > 0:
             st.toast(t("apply_all_toast", n=total_matched), icon="✅")
-        st.rerun()
 
 
 # ── Bank subtab: charts ───────────────────────────────────────────────────────
