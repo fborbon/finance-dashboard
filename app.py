@@ -6,6 +6,7 @@ from pathlib import Path
 import pandas as pd
 import plotly.express as px
 import streamlit as st
+import streamlit.components.v1 as components
 
 from data_loader import load_all
 from predictor import predict_next_month
@@ -15,7 +16,13 @@ st.set_page_config(page_title="Panel Bancario", layout="wide", page_icon="💳")
 # ── Hide Streamlit toolbar (3-dot menu) ───────────────────────────────────────
 
 st.markdown(
-    "<style>#MainMenu{display:none}[data-testid='stToolbar']{display:none}</style>",
+    "<style>"
+    "#MainMenu{display:none}"
+    "[data-testid='stToolbar']{display:none}"
+    "div[class*='st-key-_new_cat_input']{"
+    "position:absolute!important;top:-9999px!important;left:-9999px!important;"
+    "opacity:0!important;width:1px!important;height:1px!important;overflow:hidden!important}"
+    "</style>",
     unsafe_allow_html=True,
 )
 
@@ -296,59 +303,17 @@ def apply_filters(source: pd.DataFrame) -> pd.DataFrame:
     return source[mask].copy()
 
 
-# ── Add-category dialog (opened from the dropdown sentinel) ──────────────────
-
-@st.dialog("➕")
-def _add_cat_dialog(tx_id, apply_all: bool, concept):
-    st.markdown(f"#### {t('add_cat_dialog_title')}")
-    with st.form("_add_cat_form", clear_on_submit=True):
-        new_name = st.text_input(
-            "name",
-            placeholder=t("new_cat_placeholder"),
-            label_visibility="collapsed",
-        )
-        col_ok, col_cancel = st.columns(2)
-        with col_ok:
-            ok = st.form_submit_button(t("add_cat_btn_ok"), use_container_width=True, type="primary")
-        with col_cancel:
-            cancel = st.form_submit_button(t("cancel_btn"), use_container_width=True)
-
-    if ok:
-        name = new_name.strip().lower()
-        if name:
-            if name not in [c.lower() for c in st.session_state.categories]:
-                st.session_state.categories = sorted(st.session_state.categories + [name])
-                save_categories(st.session_state.categories)
-            if tx_id is not None:
-                st.session_state.overrides[tx_id] = name
-                if apply_all and concept:
-                    prefix = _concept_prefix(concept)
-                    if prefix:
-                        for _, mrow in df[df["concept"].str.strip().str.lower().str.startswith(prefix)].iterrows():
-                            st.session_state.overrides[mrow["tx_id"]] = name
-                save_overrides(st.session_state.overrides)
-            st.toast(t("new_cat_added", name=name), icon="✅")
-        st.rerun()
-
-    if cancel:
-        st.rerun()
-
 
 # ── Bank subtab: movements table ──────────────────────────────────────────────
 
 def render_movements(bank_df: pd.DataFrame, bank: str):
     cats = st.session_state.categories
 
-    col_chk, col_add = st.columns([9, 1])
-    with col_chk:
-        apply_all = st.checkbox(
-            t("apply_all_checkbox"),
-            key=f"apply_all_{bank}",
-            help=t("apply_all_help"),
-        )
-    with col_add:
-        if st.button("➕", key=f"add_cat_btn_{bank}", help=t("add_cat_sentinel"), use_container_width=True):
-            _add_cat_dialog(tx_id=None, apply_all=False, concept=None)
+    apply_all = st.checkbox(
+        t("apply_all_checkbox"),
+        key=f"apply_all_{bank}",
+        help=t("apply_all_help"),
+    )
 
     display = bank_df[["date", "concept", "amount", "balance", "category", "tx_id"]].copy()
     display["date"] = display["date"].dt.strftime("%Y-%m-%d")
@@ -636,6 +601,77 @@ def render_settings():
     st.subheader(t("session_header"))
     st.link_button(t("logout_btn"), url="/logout", type="secondary")
 
+
+# ── Dropdown + button: JS bridge for inline category creation ────────────────
+
+# If JS has written a new category name via the bridge input, process it.
+_bridge_val = st.session_state.get("_new_cat_input", "")
+if _bridge_val:
+    _name = _bridge_val.strip().lower()
+    if _name and _name not in [c.lower() for c in st.session_state.categories]:
+        st.session_state.categories = sorted(st.session_state.categories + [_name])
+        save_categories(st.session_state.categories)
+        st.toast(t("new_cat_added", name=_name), icon="✅")
+    del st.session_state["_new_cat_input"]
+    st.rerun()
+
+# Hidden text input — positioned off-screen via CSS; JS uses it as a signal channel.
+st.text_input("", key="_new_cat_input", label_visibility="collapsed", placeholder="__cat_bridge__")
+
+# Inject JS once per browser session (guarded by _catBridgeInit on the parent window).
+# Adds a + button inside every AG Grid rich-select filter input.  When clicked it
+# reads the typed text and pushes it through the hidden bridge input to Python.
+components.html("""<script>
+(function () {
+    if (parent.window._catBridgeInit) return;
+    parent.window._catBridgeInit = true;
+
+    function triggerBridge(text) {
+        var inp = parent.document.querySelector('input[placeholder="__cat_bridge__"]');
+        if (!inp) return;
+        var setter = Object.getOwnPropertyDescriptor(
+            parent.window.HTMLInputElement.prototype, 'value').set;
+        setter.call(inp, text);
+        inp.dispatchEvent(new Event('input', { bubbles: true }));
+        inp.dispatchEvent(new KeyboardEvent('keydown',
+            { key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true }));
+    }
+
+    function injectBtn(el) {
+        if (el._catPlus) return;
+        el._catPlus = true;
+        var wrap = el.parentElement;
+        wrap.style.position = 'relative';
+        var btn = parent.document.createElement('button');
+        btn.type = 'button';
+        btn.textContent = '+';
+        btn.title = 'Nueva categoría';
+        btn.style.cssText = [
+            'position:absolute', 'right:4px', 'top:50%',
+            'transform:translateY(-50%)',
+            'background:transparent', 'border:1px solid #aaa',
+            'border-radius:3px', 'padding:0 6px', 'line-height:1.6',
+            'cursor:pointer', 'font-size:13px', 'color:inherit', 'z-index:9999'
+        ].join(';');
+        wrap.appendChild(btn);
+        btn.addEventListener('mousedown', function (e) {
+            e.preventDefault();
+            e.stopPropagation();
+            var text = el.value.trim().toLowerCase();
+            if (!text) return;
+            el.blur();
+            setTimeout(function () { triggerBridge(text); }, 50);
+        });
+    }
+
+    parent.window._catObserver = new MutationObserver(function () {
+        parent.document.querySelectorAll('.ag-rich-select-field-input').forEach(injectBtn);
+    });
+    parent.window._catObserver.observe(
+        parent.document.body, { childList: true, subtree: true });
+    parent.document.querySelectorAll('.ag-rich-select-field-input').forEach(injectBtn);
+})();
+</script>""", height=0)
 
 # ── Layout ────────────────────────────────────────────────────────────────────
 
