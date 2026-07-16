@@ -6,6 +6,7 @@ from pathlib import Path
 import pandas as pd
 import plotly.express as px
 import streamlit as st
+import streamlit.components.v1 as components
 
 from data_loader import load_all
 from predictor import predict_next_month
@@ -619,52 +620,88 @@ if _bridge_val:
 # Key and placeholder use no double-underscores so Markdown doesn't bold-process them.
 st.text_input("", key="_catbridge", label_visibility="collapsed", placeholder="catbridge")
 
-# Inject JS via onerror on a hidden img (runs in the main page context, no iframe).
-# onerror uses double quotes; all JS strings use single quotes — zero quoting conflict.
-st.markdown(
-    '<img src="x" style="display:none" onerror="'
-    "(function(){"
-    "if(window._catBridgeInit)return;"
-    "window._catBridgeInit=true;"
-    "function trigBridge(x){"
-    "var i=document.querySelector('input[placeholder=catbridge]');"
-    "if(!i)return;"
-    "Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(i,x);"
-    "i.dispatchEvent(new Event('input',{bubbles:true}));"
-    "i.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',code:'Enter',keyCode:13,bubbles:true}));}"
-    "function injBtn(el){"
-    "if(el._cp)return;el._cp=true;"
-    "var b=document.createElement('button');"
-    "b.type='button';b.textContent='+';b.title='Nueva categoria';"
-    "b.style.cssText='position:fixed;background:#1d6fe5;color:#fff;border:none;"
-    "border-radius:0 4px 4px 0;padding:0 10px;cursor:pointer;"
-    "font-size:18px;font-weight:bold;z-index:999999;line-height:1';"
-    "document.body.appendChild(b);"
-    "function place(){"
-    "var r=el.getBoundingClientRect();"
-    "if(r.width===0){setTimeout(place,20);return;}"
-    "b.style.left=(r.right-1)+'px';"
-    "b.style.top=r.top+'px';"
-    "b.style.height=r.height+'px';}"
-    "setTimeout(place,30);"
-    "var gone=new MutationObserver(function(){"
-    "if(!el.isConnected){b.remove();gone.disconnect();}});"
-    "gone.observe(document.body,{childList:true,subtree:true});"
-    "b.addEventListener('mousedown',function(ev){"
-    "ev.preventDefault();ev.stopPropagation();"
-    "var t=el.value.trim().toLowerCase();"
-    "if(!t)return;"
-    "b.remove();gone.disconnect();"
-    "el.blur();"
-    "setTimeout(function(){trigBridge(t);},50);});}"
-    "var SEL='.ag-rich-select-field-input,.ag-rich-select input,.ag-popup input[type=text],.ag-popup input:not([type])';"
-    "new MutationObserver(function(){"
-    "document.querySelectorAll(SEL).forEach(injBtn);"
-    "}).observe(document.body,{childList:true,subtree:true});"
-    "document.querySelectorAll(SEL).forEach(injBtn);"
-    '})()">',
-    unsafe_allow_html=True,
-)
+# components.html() creates a same-origin iframe (Streamlit sets allow-same-origin
+# in the sandbox), so parent.document access works.  The + button uses position:fixed
+# + getBoundingClientRect so it floats above everything regardless of overflow.
+components.html("""
+<script>
+(function () {
+    try {
+        if (parent.window._catBridgeInit) return;
+        parent.window._catBridgeInit = true;
+    } catch (e) { return; }
+
+    function trigBridge(text) {
+        var inp = parent.document.querySelector('input[placeholder="catbridge"]');
+        if (!inp) return;
+        var setter = Object.getOwnPropertyDescriptor(
+            parent.window.HTMLInputElement.prototype, 'value').set;
+        setter.call(inp, text);
+        inp.dispatchEvent(new Event('input', { bubbles: true }));
+        inp.dispatchEvent(new KeyboardEvent('keydown',
+            { key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true }));
+    }
+
+    function injBtn(el) {
+        if (el._cp) return;
+        el._cp = true;
+
+        var b = parent.document.createElement('button');
+        b.type = 'button';
+        b.textContent = '+';
+        b.title = 'Nueva categoria';
+        b.style.cssText = [
+            'position:fixed', 'background:#1d6fe5', 'color:#fff',
+            'border:none', 'border-radius:0 4px 4px 0',
+            'padding:0 12px', 'cursor:pointer',
+            'font-size:20px', 'font-weight:bold',
+            'z-index:2147483647', 'line-height:1',
+            'display:flex', 'align-items:center', 'justify-content:center'
+        ].join(';');
+        parent.document.body.appendChild(b);
+
+        function place() {
+            var r = el.getBoundingClientRect();
+            if (r.width === 0) { setTimeout(place, 30); return; }
+            b.style.left   = (r.right - 1) + 'px';
+            b.style.top    = r.top + 'px';
+            b.style.height = r.height + 'px';
+        }
+        setTimeout(place, 40);
+
+        var gone = new MutationObserver(function () {
+            if (!el.isConnected) { b.remove(); gone.disconnect(); }
+        });
+        gone.observe(parent.document.body, { childList: true, subtree: true });
+
+        b.addEventListener('mousedown', function (ev) {
+            ev.preventDefault(); ev.stopPropagation();
+            var t = el.value.trim().toLowerCase();
+            if (!t) return;
+            b.remove(); gone.disconnect();
+            el.blur();
+            setTimeout(function () { trigBridge(t); }, 50);
+        });
+    }
+
+    var SEL = [
+        '.ag-rich-select-field-input',
+        '.ag-popup-editor input[type="text"]',
+        '.ag-popup input[type="text"]',
+        '.ag-popup input:not([type="hidden"])',
+        '[class*="select"][class*="editor"] input',
+        '[class*="Select"] input[type="text"]',
+    ].join(',');
+
+    parent.window._catObserver = new MutationObserver(function () {
+        parent.document.querySelectorAll(SEL).forEach(injBtn);
+    });
+    parent.window._catObserver.observe(
+        parent.document.body, { childList: true, subtree: true });
+    parent.document.querySelectorAll(SEL).forEach(injBtn);
+})();
+</script>
+""", height=0)
 
 # ── Layout ────────────────────────────────────────────────────────────────────
 
