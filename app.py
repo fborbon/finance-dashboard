@@ -6,8 +6,6 @@ from pathlib import Path
 import pandas as pd
 import plotly.express as px
 import streamlit as st
-import streamlit.components.v1 as components
-
 from data_loader import load_all
 from predictor import predict_next_month
 
@@ -19,9 +17,6 @@ st.markdown(
     "<style>"
     "#MainMenu{display:none}"
     "[data-testid='stToolbar']{display:none}"
-    "div[class*='st-key-_catbridge']{"
-    "position:absolute!important;top:-9999px!important;left:-9999px!important;"
-    "opacity:0!important;width:1px!important;height:1px!important;overflow:hidden!important}"
     "</style>",
     unsafe_allow_html=True,
 )
@@ -307,6 +302,7 @@ def apply_filters(source: pd.DataFrame) -> pd.DataFrame:
 # ── Bank subtab: movements table ──────────────────────────────────────────────
 
 def render_movements(bank_df: pd.DataFrame, bank: str):
+    SENTINEL = t("add_cat_sentinel")
     cats = st.session_state.categories
 
     apply_all = st.checkbox(
@@ -328,7 +324,7 @@ def render_movements(bank_df: pd.DataFrame, bank: str):
             "amount":   st.column_config.NumberColumn(t("col_amount"), disabled=True, format="%.2f", width="small"),
             "balance":  st.column_config.NumberColumn(t("col_balance"),disabled=True, format="%.2f", width="small"),
             "category": st.column_config.SelectboxColumn(
-                t("col_category"), options=cats, required=True, width="medium"
+                t("col_category"), options=cats + [SENTINEL], required=True, width="medium"
             ),
         },
         hide_index=True,
@@ -337,10 +333,13 @@ def render_movements(bank_df: pd.DataFrame, bank: str):
         key=f"editor_{bank}",
     )
 
-    changed = edited["category"] != display["category"]
-    if changed.any():
+    changed      = edited["category"] != display["category"]
+    sentinel_sel = changed & (edited["category"] == SENTINEL)
+    real_changes = changed & ~sentinel_sel
+
+    if real_changes.any():
         total_matched = 0
-        for idx in display.index[changed]:
+        for idx in display.index[real_changes]:
             new_cat = edited.loc[idx, "category"]
             st.session_state.overrides[display.loc[idx, "tx_id"]] = new_cat
             if apply_all:
@@ -350,10 +349,52 @@ def render_movements(bank_df: pd.DataFrame, bank: str):
                     for _, mrow in matches.iterrows():
                         st.session_state.overrides[mrow["tx_id"]] = new_cat
                     total_matched += len(matches)
-
         save_overrides(st.session_state.overrides)
         if apply_all and total_matched > 0:
             st.toast(t("apply_all_toast", n=total_matched), icon="✅")
+
+    # Sentinel selected → remember which rows need a new category name
+    if sentinel_sel.any():
+        st.session_state[f"_pending_new_cat_{bank}"] = [
+            display.loc[idx, "tx_id"] for idx in display.index[sentinel_sel]
+        ]
+
+    # Show inline new-category form whenever a sentinel row is pending
+    pending_ids = st.session_state.get(f"_pending_new_cat_{bank}", [])
+    if pending_ids:
+        st.divider()
+        col_inp, col_add, col_cancel = st.columns([5, 1, 1])
+        with col_inp:
+            new_name = st.text_input(
+                t("add_cat_dialog_title"),
+                placeholder=t("new_cat_placeholder"),
+                key=f"new_cat_name_{bank}",
+                label_visibility="collapsed",
+            )
+        with col_add:
+            add_ok = st.button(t("add_cat_btn_ok"), key=f"add_cat_ok_{bank}", type="primary", use_container_width=True)
+        with col_cancel:
+            cancel  = st.button(t("cancel_btn"),    key=f"add_cat_cancel_{bank}", use_container_width=True)
+
+        if cancel:
+            del st.session_state[f"_pending_new_cat_{bank}"]
+            if f"editor_{bank}" in st.session_state:
+                del st.session_state[f"editor_{bank}"]
+            st.rerun()
+
+        if add_ok and new_name.strip():
+            _name = new_name.strip().lower()
+            if _name not in [c.lower() for c in st.session_state.categories]:
+                st.session_state.categories = sorted(st.session_state.categories + [_name])
+                save_categories(st.session_state.categories)
+            for tid in pending_ids:
+                st.session_state.overrides[tid] = _name
+            save_overrides(st.session_state.overrides)
+            del st.session_state[f"_pending_new_cat_{bank}"]
+            if f"editor_{bank}" in st.session_state:
+                del st.session_state[f"editor_{bank}"]
+            st.toast(t("new_cat_added", name=_name), icon="✅")
+            st.rerun()
 
 
 # ── Bank subtab: charts ───────────────────────────────────────────────────────
@@ -602,116 +643,6 @@ def render_settings():
     st.subheader(t("session_header"))
     st.link_button(t("logout_btn"), url="/logout", type="secondary")
 
-
-# ── Dropdown + button: JS bridge for inline category creation ────────────────
-
-# If JS has written a new category name via the bridge input, process it.
-_bridge_val = st.session_state.get("_catbridge", "")
-if _bridge_val:
-    _name = _bridge_val.strip().lower()
-    if _name and _name not in [c.lower() for c in st.session_state.categories]:
-        st.session_state.categories = sorted(st.session_state.categories + [_name])
-        save_categories(st.session_state.categories)
-        st.toast(t("new_cat_added", name=_name), icon="✅")
-    del st.session_state["_catbridge"]
-    st.rerun()
-
-# Hidden text input — positioned off-screen via CSS; JS uses it as a signal channel.
-# Key and placeholder use no double-underscores so Markdown doesn't bold-process them.
-st.text_input("", key="_catbridge", label_visibility="collapsed", placeholder="catbridge")
-
-# components.html() creates a same-origin iframe (Streamlit sets allow-same-origin
-# in the sandbox), so parent.document access works.  The + button uses position:fixed
-# + getBoundingClientRect so it floats above everything regardless of overflow.
-components.html("""
-<script>
-(function () {
-    try {
-        if (parent.window._catBridgeInit) return;
-        parent.window._catBridgeInit = true;
-        console.log('[cat+] bridge active');
-    } catch (e) {
-        console.log('[cat+] parent access failed:', e.message);
-        return;
-    }
-
-    function trigBridge(text) {
-        var inp = parent.document.querySelector('input[placeholder="catbridge"]');
-        if (!inp) return;
-        var setter = Object.getOwnPropertyDescriptor(
-            parent.window.HTMLInputElement.prototype, 'value').set;
-        setter.call(inp, text);
-        inp.dispatchEvent(new Event('input', { bubbles: true }));
-        inp.dispatchEvent(new KeyboardEvent('keydown',
-            { key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true }));
-    }
-
-    function injBtn(el) {
-        if (el._cp) return;
-        if (el.placeholder === 'catbridge') return;
-        var t = (el.type || '').toLowerCase();
-        if (t && t !== 'text' && t !== 'search') return;
-        if (!el.offsetParent && el.style.display === 'none') return;
-
-        // Walk up to confirm this input lives inside an AG Grid element
-        var node = el.parentElement, depth = 0, inAg = false;
-        while (node && depth < 20) {
-            if ((node.className || '').toString().indexOf('ag-') !== -1) {
-                inAg = true; break;
-            }
-            node = node.parentElement; depth++;
-        }
-        if (!inAg) return;
-
-        el._cp = true;
-        console.log('[cat+] injecting button on', el.className || el.tagName);
-
-        var b = parent.document.createElement('button');
-        b.type = 'button'; b.textContent = '+'; b.title = 'Nueva categoria';
-        b.style.cssText = [
-            'position:fixed', 'background:#1d6fe5', 'color:#fff',
-            'border:none', 'border-radius:0 4px 4px 0',
-            'padding:0 14px', 'cursor:pointer',
-            'font-size:22px', 'font-weight:bold',
-            'z-index:2147483647', 'display:flex',
-            'align-items:center', 'justify-content:center'
-        ].join(';');
-        parent.document.body.appendChild(b);
-
-        function place() {
-            var r = el.getBoundingClientRect();
-            if (r.width === 0) { setTimeout(place, 30); return; }
-            b.style.left   = (r.right - 1) + 'px';
-            b.style.top    = r.top + 'px';
-            b.style.height = r.height + 'px';
-        }
-        setTimeout(place, 40);
-
-        var gone = new MutationObserver(function () {
-            if (!el.isConnected) { b.remove(); gone.disconnect(); }
-        });
-        gone.observe(parent.document.body, { childList: true, subtree: true });
-
-        b.addEventListener('mousedown', function (ev) {
-            ev.preventDefault(); ev.stopPropagation();
-            var txt = el.value.trim().toLowerCase();
-            if (!txt) return;
-            b.remove(); gone.disconnect();
-            el.blur();
-            setTimeout(function () { trigBridge(txt); }, 50);
-        });
-    }
-
-    // Scan every newly-added input; check ancestry for ag- classes
-    parent.window._catObserver = new MutationObserver(function () {
-        parent.document.querySelectorAll('input').forEach(injBtn);
-    });
-    parent.window._catObserver.observe(
-        parent.document.body, { childList: true, subtree: true });
-    parent.document.querySelectorAll('input').forEach(injBtn);
-})();
-</script>
-""", height=0)
 
 # ── Layout ────────────────────────────────────────────────────────────────────
 
