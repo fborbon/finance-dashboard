@@ -629,7 +629,11 @@ components.html("""
     try {
         if (parent.window._catBridgeInit) return;
         parent.window._catBridgeInit = true;
-    } catch (e) { return; }
+        console.log('[cat+] bridge active');
+    } catch (e) {
+        console.log('[cat+] parent access failed:', e.message);
+        return;
+    }
 
     function trigBridge(text) {
         var inp = parent.document.querySelector('input[placeholder="catbridge"]');
@@ -644,19 +648,33 @@ components.html("""
 
     function injBtn(el) {
         if (el._cp) return;
+        if (el.placeholder === 'catbridge') return;
+        var t = (el.type || '').toLowerCase();
+        if (t && t !== 'text' && t !== 'search') return;
+        if (!el.offsetParent && el.style.display === 'none') return;
+
+        // Walk up to confirm this input lives inside an AG Grid element
+        var node = el.parentElement, depth = 0, inAg = false;
+        while (node && depth < 20) {
+            if ((node.className || '').toString().indexOf('ag-') !== -1) {
+                inAg = true; break;
+            }
+            node = node.parentElement; depth++;
+        }
+        if (!inAg) return;
+
         el._cp = true;
+        console.log('[cat+] injecting button on', el.className || el.tagName);
 
         var b = parent.document.createElement('button');
-        b.type = 'button';
-        b.textContent = '+';
-        b.title = 'Nueva categoria';
+        b.type = 'button'; b.textContent = '+'; b.title = 'Nueva categoria';
         b.style.cssText = [
             'position:fixed', 'background:#1d6fe5', 'color:#fff',
             'border:none', 'border-radius:0 4px 4px 0',
-            'padding:0 12px', 'cursor:pointer',
-            'font-size:20px', 'font-weight:bold',
-            'z-index:2147483647', 'line-height:1',
-            'display:flex', 'align-items:center', 'justify-content:center'
+            'padding:0 14px', 'cursor:pointer',
+            'font-size:22px', 'font-weight:bold',
+            'z-index:2147483647', 'display:flex',
+            'align-items:center', 'justify-content:center'
         ].join(';');
         parent.document.body.appendChild(b);
 
@@ -676,29 +694,21 @@ components.html("""
 
         b.addEventListener('mousedown', function (ev) {
             ev.preventDefault(); ev.stopPropagation();
-            var t = el.value.trim().toLowerCase();
-            if (!t) return;
+            var txt = el.value.trim().toLowerCase();
+            if (!txt) return;
             b.remove(); gone.disconnect();
             el.blur();
-            setTimeout(function () { trigBridge(t); }, 50);
+            setTimeout(function () { trigBridge(txt); }, 50);
         });
     }
 
-    var SEL = [
-        '.ag-rich-select-field-input',
-        '.ag-popup-editor input[type="text"]',
-        '.ag-popup input[type="text"]',
-        '.ag-popup input:not([type="hidden"])',
-        '[class*="select"][class*="editor"] input',
-        '[class*="Select"] input[type="text"]',
-    ].join(',');
-
+    // Scan every newly-added input; check ancestry for ag- classes
     parent.window._catObserver = new MutationObserver(function () {
-        parent.document.querySelectorAll(SEL).forEach(injBtn);
+        parent.document.querySelectorAll('input').forEach(injBtn);
     });
     parent.window._catObserver.observe(
         parent.document.body, { childList: true, subtree: true });
-    parent.document.querySelectorAll(SEL).forEach(injBtn);
+    parent.document.querySelectorAll('input').forEach(injBtn);
 })();
 </script>
 """, height=0)
