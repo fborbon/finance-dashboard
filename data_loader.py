@@ -156,19 +156,43 @@ def _load_revolut_csv(path: Path, bank_name: str) -> pd.DataFrame:
 
 def _load_bank1_file(path: Path) -> pd.DataFrame:
     xl = pd.ExcelFile(path)
-    raw = pd.read_excel(path, sheet_name=xl.sheet_names[0])
-    cols = list(raw.columns)
+    sheet = xl.sheet_names[0]
 
-    date_col    = next(c for c in cols
-                       if any(k in str(c).lower() for k in ("fecha", "date"))
-                       and not any(k in str(c).lower() for k in ("valor", "value")))
-    concept_col = next(c for c in cols
-                       if str(c).lower() in
-                       ("concepto", "descripcion", "descripción", "description", "concept"))
-    amount_col  = next(c for c in cols
-                       if any(k in str(c).lower() for k in ("importe", "amount")))
-    balance_col = next(c for c in cols
-                       if any(k in str(c).lower() for k in ("saldo", "balance")))
+    # Some exports have metadata rows above the header; try up to 6 skip values.
+    raw = cols = None
+    date_col = concept_col = amount_col = balance_col = None
+    for skip in range(7):
+        raw = pd.read_excel(path, sheet_name=sheet, skiprows=skip)
+        cols = list(raw.columns)
+        date_col = next(
+            (c for c in cols
+             if any(k in str(c).lower() for k in ("fecha", "date", "f. operaci", "operaci"))
+             and not any(k in str(c).lower() for k in ("valor", "value"))),
+            None,
+        )
+        concept_col = next(
+            (c for c in cols
+             if str(c).lower() in
+             ("concepto", "descripcion", "descripción", "description", "concept", "movimiento")),
+            None,
+        )
+        amount_col = next(
+            (c for c in cols
+             if any(k in str(c).lower() for k in ("importe", "amount"))),
+            None,
+        )
+        balance_col = next(
+            (c for c in cols
+             if any(k in str(c).lower() for k in ("saldo", "balance"))),
+            None,
+        )
+        if all(c is not None for c in (date_col, concept_col, amount_col, balance_col)):
+            break
+    else:
+        raise ValueError(
+            f"Cannot detect required columns in {path.name}. "
+            f"Columns found (last attempt): {cols}"
+        )
 
     df = raw[[date_col, concept_col, amount_col, balance_col]].copy()
     df.columns = ["date", "concept", "amount", "balance"]
