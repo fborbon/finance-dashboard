@@ -303,8 +303,10 @@ def apply_filters(source: pd.DataFrame) -> pd.DataFrame:
 # ── New-category dialog ───────────────────────────────────────────────────────
 
 def _new_cat_dialog_body():
-    bank = st.session_state.get("_dialog_bank", "")
+    bank        = st.session_state.get("_dialog_bank", "")
     pending_ids = st.session_state.get(f"_pending_new_cat_{bank}", [])
+    concepts    = st.session_state.get(f"_pending_concepts_{bank}", [])
+    apply_all   = st.session_state.get(f"_pending_apply_all_{bank}", False)
 
     with st.form("_new_cat_dlg"):
         new_name = st.text_input(
@@ -320,6 +322,8 @@ def _new_cat_dialog_body():
 
     if cancel:
         st.session_state.pop(f"_pending_new_cat_{bank}", None)
+        st.session_state.pop(f"_pending_concepts_{bank}", None)
+        st.session_state.pop(f"_pending_apply_all_{bank}", None)
         st.rerun()
 
     if add_ok and new_name.strip():
@@ -329,9 +333,22 @@ def _new_cat_dialog_body():
             save_categories(st.session_state.categories)
         for tid in pending_ids:
             st.session_state.overrides[tid] = _name
+        total_matched = 0
+        if apply_all:
+            for concept in concepts:
+                prefix = _concept_prefix(concept)
+                if prefix:
+                    matches = df[df["concept"].str.strip().str.lower().str.startswith(prefix)]
+                    for _, mrow in matches.iterrows():
+                        st.session_state.overrides[mrow["tx_id"]] = _name
+                    total_matched += len(matches)
         save_overrides(st.session_state.overrides)
         st.session_state.pop(f"_pending_new_cat_{bank}", None)
+        st.session_state.pop(f"_pending_concepts_{bank}", None)
+        st.session_state.pop(f"_pending_apply_all_{bank}", None)
         st.toast(t("new_cat_added", name=_name), icon="✅")
+        if apply_all and total_matched > 0:
+            st.toast(t("apply_all_toast", n=total_matched), icon="✅")
         st.rerun()
 
 
@@ -406,6 +423,10 @@ def render_movements(bank_df: pd.DataFrame, bank: str):
         st.session_state[f"_pending_new_cat_{bank}"] = [
             display.loc[idx, "tx_id"] for idx in display.index[sentinel_sel]
         ]
+        st.session_state[f"_pending_concepts_{bank}"] = [
+            display.loc[idx, "concept"] for idx in display.index[sentinel_sel]
+        ]
+        st.session_state[f"_pending_apply_all_{bank}"] = apply_all
         st.session_state["_dialog_bank"] = bank
         if st.session_state.get("lang", "es") == "es":
             _new_cat_dialog_es()
