@@ -288,7 +288,7 @@ date_max = df["date"].max().date()
 date_range = st.sidebar.date_input(t("date_range"), value=[date_min, date_max])
 start_date = date_range[0] if len(date_range) > 0 else date_min
 end_date = date_range[1] if len(date_range) > 1 else date_max
-hide_transfers = st.sidebar.checkbox(t("hide_transfers"), value=True)
+hide_transfers = st.sidebar.checkbox(t("hide_transfers"), value=False)
 
 st.sidebar.divider()
 if st.sidebar.button(t("language_btn"), use_container_width=True):
