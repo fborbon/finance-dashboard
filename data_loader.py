@@ -189,10 +189,23 @@ def _load_bank1_file(path: Path) -> pd.DataFrame:
         if all(c is not None for c in (date_col, concept_col, amount_col, balance_col)):
             break
     else:
-        raise ValueError(
-            f"Cannot detect required columns in {path.name}. "
-            f"Columns found (last attempt): {cols}"
-        )
+        # No header row found — new Caja Rural exports ship with no column names.
+        # Positional layout (both 5- and 6-column variants):
+        #   0=date  1=date_val(skip)  2=concept  3=amount  4=balance  [5=entry_no]
+        raw = pd.read_excel(path, sheet_name=sheet, header=None)
+        if len(raw.columns) < 5:
+            raise ValueError(
+                f"Cannot detect required columns in {path.name}. "
+                f"Columns found (last attempt): {cols}"
+            )
+        df = raw.iloc[:, [0, 2, 3, 4]].copy()
+        df.columns = ["date", "concept", "amount", "balance"]
+        df["date"]    = pd.to_datetime(df["date"],    errors="coerce")
+        df["amount"]  = pd.to_numeric(df["amount"],   errors="coerce")
+        df["balance"] = pd.to_numeric(df["balance"],  errors="coerce")
+        df["concept"] = df["concept"].astype(str).str.strip()
+        df["bank"]    = "Bank1"
+        return df
 
     df = raw[[date_col, concept_col, amount_col, balance_col]].copy()
     df.columns = ["date", "concept", "amount", "balance"]
