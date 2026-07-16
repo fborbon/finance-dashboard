@@ -299,7 +299,7 @@ def apply_filters(source: pd.DataFrame) -> pd.DataFrame:
 # ── Add-category dialog (opened from the dropdown sentinel) ──────────────────
 
 @st.dialog("➕")
-def _add_cat_dialog(tx_id: str, apply_all: bool, concept: str):
+def _add_cat_dialog(tx_id, apply_all: bool, concept):
     st.markdown(f"#### {t('add_cat_dialog_title')}")
     with st.form("_add_cat_form", clear_on_submit=True):
         new_name = st.text_input(
@@ -319,13 +319,14 @@ def _add_cat_dialog(tx_id: str, apply_all: bool, concept: str):
             if name not in [c.lower() for c in st.session_state.categories]:
                 st.session_state.categories = sorted(st.session_state.categories + [name])
                 save_categories(st.session_state.categories)
-            st.session_state.overrides[tx_id] = name
-            if apply_all:
-                prefix = _concept_prefix(concept)
-                if prefix:
-                    for _, mrow in df[df["concept"].str.strip().str.lower().str.startswith(prefix)].iterrows():
-                        st.session_state.overrides[mrow["tx_id"]] = name
-            save_overrides(st.session_state.overrides)
+            if tx_id is not None:
+                st.session_state.overrides[tx_id] = name
+                if apply_all and concept:
+                    prefix = _concept_prefix(concept)
+                    if prefix:
+                        for _, mrow in df[df["concept"].str.strip().str.lower().str.startswith(prefix)].iterrows():
+                            st.session_state.overrides[mrow["tx_id"]] = name
+                save_overrides(st.session_state.overrides)
             st.toast(t("new_cat_added", name=name), icon="✅")
         st.rerun()
 
@@ -338,14 +339,16 @@ def _add_cat_dialog(tx_id: str, apply_all: bool, concept: str):
 def render_movements(bank_df: pd.DataFrame, bank: str):
     cats = st.session_state.categories
 
-    apply_all = st.checkbox(
-        t("apply_all_checkbox"),
-        key=f"apply_all_{bank}",
-        help=t("apply_all_help"),
-    )
-
-    sentinel = t("add_cat_sentinel")
-    cats_with_add = cats + [sentinel]
+    col_chk, col_add = st.columns([9, 1])
+    with col_chk:
+        apply_all = st.checkbox(
+            t("apply_all_checkbox"),
+            key=f"apply_all_{bank}",
+            help=t("apply_all_help"),
+        )
+    with col_add:
+        if st.button("➕", key=f"add_cat_btn_{bank}", help=t("add_cat_sentinel"), use_container_width=True):
+            _add_cat_dialog(tx_id=None, apply_all=False, concept=None)
 
     display = bank_df[["date", "concept", "amount", "balance", "category", "tx_id"]].copy()
     display["date"] = display["date"].dt.strftime("%Y-%m-%d")
@@ -359,7 +362,7 @@ def render_movements(bank_df: pd.DataFrame, bank: str):
             "amount":   st.column_config.NumberColumn(t("col_amount"), disabled=True, format="%.2f", width="small"),
             "balance":  st.column_config.NumberColumn(t("col_balance"),disabled=True, format="%.2f", width="small"),
             "category": st.column_config.SelectboxColumn(
-                t("col_category"), options=cats_with_add, required=True, width="medium"
+                t("col_category"), options=cats, required=True, width="medium"
             ),
         },
         hide_index=True,
@@ -373,13 +376,6 @@ def render_movements(bank_df: pd.DataFrame, bank: str):
         total_matched = 0
         for idx in display.index[changed]:
             new_cat = edited.loc[idx, "category"]
-            if new_cat == sentinel:
-                _add_cat_dialog(
-                    tx_id=display.loc[idx, "tx_id"],
-                    apply_all=apply_all,
-                    concept=display.loc[idx, "concept"],
-                )
-                return  # dialog is open; wait for user input
             st.session_state.overrides[display.loc[idx, "tx_id"]] = new_cat
             if apply_all:
                 prefix = _concept_prefix(display.loc[idx, "concept"])
