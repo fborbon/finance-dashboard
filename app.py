@@ -313,6 +313,7 @@ def render_movements(bank_df: pd.DataFrame, bank: str):
         t("apply_all_checkbox"),
         key=f"apply_all_{bank}",
         help=t("apply_all_help"),
+        value=True,
     )
 
     display = bank_df[["date", "concept", "amount", "balance", "category", "tx_id"]].copy()
