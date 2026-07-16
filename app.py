@@ -363,18 +363,20 @@ def render_movements(bank_df: pd.DataFrame, bank: str):
     pending_ids = st.session_state.get(f"_pending_new_cat_{bank}", [])
     if pending_ids:
         st.divider()
-        col_inp, col_add, col_cancel = st.columns([5, 1, 1])
-        with col_inp:
-            new_name = st.text_input(
-                t("add_cat_dialog_title"),
-                placeholder=t("new_cat_placeholder"),
-                key=f"new_cat_name_{bank}",
-                label_visibility="collapsed",
-            )
-        with col_add:
-            add_ok = st.button(t("add_cat_btn_ok"), key=f"add_cat_ok_{bank}", type="primary", use_container_width=True)
-        with col_cancel:
-            cancel  = st.button(t("cancel_btn"),    key=f"add_cat_cancel_{bank}", use_container_width=True)
+        with st.form(key=f"new_cat_form_{bank}", clear_on_submit=True):
+            col_inp, col_add = st.columns([6, 1])
+            with col_inp:
+                new_name = st.text_input(
+                    t("add_cat_dialog_title"),
+                    placeholder=t("new_cat_placeholder"),
+                    label_visibility="collapsed",
+                )
+            with col_add:
+                add_ok = st.form_submit_button(
+                    t("add_cat_btn_ok"), type="primary", use_container_width=True
+                )
+
+        cancel = st.button(t("cancel_btn"), key=f"add_cat_cancel_{bank}")
 
         if cancel:
             del st.session_state[f"_pending_new_cat_{bank}"]
