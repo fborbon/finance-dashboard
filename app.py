@@ -299,6 +299,51 @@ def apply_filters(source: pd.DataFrame) -> pd.DataFrame:
 
 
 
+# ── New-category dialog ───────────────────────────────────────────────────────
+
+def _new_cat_dialog_body():
+    bank = st.session_state.get("_dialog_bank", "")
+    pending_ids = st.session_state.get(f"_pending_new_cat_{bank}", [])
+
+    with st.form("_new_cat_dlg"):
+        new_name = st.text_input(
+            "", placeholder=t("new_cat_placeholder"), label_visibility="collapsed"
+        )
+        col1, col2 = st.columns(2)
+        with col1:
+            add_ok = st.form_submit_button(
+                t("add_cat_btn_ok"), type="primary", use_container_width=True
+            )
+        with col2:
+            cancel = st.form_submit_button(t("cancel_btn"), use_container_width=True)
+
+    if cancel:
+        st.session_state.pop(f"_pending_new_cat_{bank}", None)
+        st.rerun()
+
+    if add_ok and new_name.strip():
+        _name = new_name.strip().lower()
+        if _name not in [c.lower() for c in st.session_state.categories]:
+            st.session_state.categories = sorted(st.session_state.categories + [_name])
+            save_categories(st.session_state.categories)
+        for tid in pending_ids:
+            st.session_state.overrides[tid] = _name
+        save_overrides(st.session_state.overrides)
+        st.session_state.pop(f"_pending_new_cat_{bank}", None)
+        st.toast(t("new_cat_added", name=_name), icon="✅")
+        st.rerun()
+
+
+@st.dialog("Nueva categoría")
+def _new_cat_dialog_es():
+    _new_cat_dialog_body()
+
+
+@st.dialog("New category")
+def _new_cat_dialog_en():
+    _new_cat_dialog_body()
+
+
 # ── Bank subtab: movements table ──────────────────────────────────────────────
 
 def render_movements(bank_df: pd.DataFrame, bank: str):
@@ -353,50 +398,21 @@ def render_movements(bank_df: pd.DataFrame, bank: str):
         if apply_all and total_matched > 0:
             st.toast(t("apply_all_toast", n=total_matched), icon="✅")
 
-    # Sentinel selected → remember which rows need a new category name
+    # Sentinel selected → open popup dialog to name the new category
     if sentinel_sel.any():
         st.session_state[f"_pending_new_cat_{bank}"] = [
             display.loc[idx, "tx_id"] for idx in display.index[sentinel_sel]
         ]
-
-    # Show inline new-category form whenever a sentinel row is pending
-    pending_ids = st.session_state.get(f"_pending_new_cat_{bank}", [])
-    if pending_ids:
-        st.divider()
-        with st.form(key=f"new_cat_form_{bank}"):
-            col_inp, col_add = st.columns([6, 1])
-            with col_inp:
-                new_name = st.text_input(
-                    t("add_cat_dialog_title"),
-                    placeholder=t("new_cat_placeholder"),
-                    label_visibility="collapsed",
-                )
-            with col_add:
-                add_ok = st.form_submit_button(
-                    t("add_cat_btn_ok"), type="primary", use_container_width=True
-                )
-
-        cancel = st.button(t("cancel_btn"), key=f"add_cat_cancel_{bank}")
-
-        if cancel:
-            del st.session_state[f"_pending_new_cat_{bank}"]
-            if f"editor_{bank}" in st.session_state:
-                del st.session_state[f"editor_{bank}"]
-            st.rerun()
-
-        if add_ok and new_name.strip():
-            _name = new_name.strip().lower()
-            if _name not in [c.lower() for c in st.session_state.categories]:
-                st.session_state.categories = sorted(st.session_state.categories + [_name])
-                save_categories(st.session_state.categories)
-            for tid in pending_ids:
-                st.session_state.overrides[tid] = _name
-            save_overrides(st.session_state.overrides)
-            del st.session_state[f"_pending_new_cat_{bank}"]
-            if f"editor_{bank}" in st.session_state:
-                del st.session_state[f"editor_{bank}"]
-            st.toast(t("new_cat_added", name=_name), icon="✅")
-            st.rerun()
+        st.session_state["_dialog_bank"] = bank
+        # Clear editor so sentinel won't re-trigger if dialog is dismissed with X
+        st.session_state.pop(f"editor_{bank}", None)
+        if st.session_state.get("lang", "es") == "es":
+            _new_cat_dialog_es()
+        else:
+            _new_cat_dialog_en()
+    elif st.session_state.get(f"_pending_new_cat_{bank}"):
+        # Dialog was dismissed with X — orphaned pending, clean it up
+        st.session_state.pop(f"_pending_new_cat_{bank}", None)
 
 
 # ── Bank subtab: charts ───────────────────────────────────────────────────────
