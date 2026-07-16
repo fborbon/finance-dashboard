@@ -6,7 +6,6 @@ from pathlib import Path
 import pandas as pd
 import plotly.express as px
 import streamlit as st
-import streamlit.components.v1 as components
 
 from data_loader import load_all
 from predictor import predict_next_month
@@ -619,60 +618,44 @@ if _bridge_val:
 # Hidden text input — positioned off-screen via CSS; JS uses it as a signal channel.
 st.text_input("", key="_new_cat_input", label_visibility="collapsed", placeholder="__cat_bridge__")
 
-# Inject JS once per browser session (guarded by _catBridgeInit on the parent window).
-# Adds a + button inside every AG Grid rich-select filter input.  When clicked it
-# reads the typed text and pushes it through the hidden bridge input to Python.
-components.html("""<script>
-(function () {
-    if (parent.window._catBridgeInit) return;
-    parent.window._catBridgeInit = true;
-
-    function triggerBridge(text) {
-        var inp = parent.document.querySelector('input[placeholder="__cat_bridge__"]');
-        if (!inp) return;
-        var setter = Object.getOwnPropertyDescriptor(
-            parent.window.HTMLInputElement.prototype, 'value').set;
-        setter.call(inp, text);
-        inp.dispatchEvent(new Event('input', { bubbles: true }));
-        inp.dispatchEvent(new KeyboardEvent('keydown',
-            { key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true }));
-    }
-
-    function injectBtn(el) {
-        if (el._catPlus) return;
-        el._catPlus = true;
-        var wrap = el.parentElement;
-        wrap.style.position = 'relative';
-        var btn = parent.document.createElement('button');
-        btn.type = 'button';
-        btn.textContent = '+';
-        btn.title = 'Nueva categoría';
-        btn.style.cssText = [
-            'position:absolute', 'right:4px', 'top:50%',
-            'transform:translateY(-50%)',
-            'background:transparent', 'border:1px solid #aaa',
-            'border-radius:3px', 'padding:0 6px', 'line-height:1.6',
-            'cursor:pointer', 'font-size:13px', 'color:inherit', 'z-index:9999'
-        ].join(';');
-        wrap.appendChild(btn);
-        btn.addEventListener('mousedown', function (e) {
-            e.preventDefault();
-            e.stopPropagation();
-            var text = el.value.trim().toLowerCase();
-            if (!text) return;
-            el.blur();
-            setTimeout(function () { triggerBridge(text); }, 50);
-        });
-    }
-
-    parent.window._catObserver = new MutationObserver(function () {
-        parent.document.querySelectorAll('.ag-rich-select-field-input').forEach(injectBtn);
-    });
-    parent.window._catObserver.observe(
-        parent.document.body, { childList: true, subtree: true });
-    parent.document.querySelectorAll('.ag-rich-select-field-input').forEach(injectBtn);
-})();
-</script>""", height=0)
+# Inject JS via onerror on a hidden img — runs in the main Streamlit page context
+# (no iframe / cross-origin restrictions). Uses only single-quoted JS strings so the
+# snippet is safe inside the double-quoted onerror HTML attribute without any escaping.
+st.markdown(
+    "<img src='__x__' style='display:none' onerror='"
+    "(function(){"
+    "if(window._catBridgeInit)return;"
+    "window._catBridgeInit=true;"
+    "function trigBridge(x){"
+    "var i=document.querySelector('input[placeholder=__cat_bridge__]');"
+    "if(!i)return;"
+    "Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(i,x);"
+    "i.dispatchEvent(new Event('input',{bubbles:true}));"
+    "i.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',code:'Enter',keyCode:13,bubbles:true}));}"
+    "function injBtn(el){"
+    "if(el._cp)return;el._cp=true;"
+    "el.style.paddingRight='28px';"
+    "var w=el.parentElement;"
+    "if(getComputedStyle(w).position==='static')w.style.position='relative';"
+    "var b=document.createElement('button');"
+    "b.type='button';b.textContent='+';b.title='Nueva categoria';"
+    "b.style.cssText='position:absolute;right:4px;top:50%;transform:translateY(-50%);"
+    "background:transparent;border:1px solid currentColor;border-radius:3px;"
+    "padding:0 5px;line-height:1.6;cursor:pointer;font-size:12px;color:inherit;z-index:10;opacity:0.7';"
+    "w.appendChild(b);"
+    "b.addEventListener('mousedown',function(ev){"
+    "ev.preventDefault();ev.stopPropagation();"
+    "var t=el.value.trim().toLowerCase();"
+    "if(!t)return;"
+    "el.blur();"
+    "setTimeout(function(){trigBridge(t);},50);});}"
+    "new MutationObserver(function(){"
+    "document.querySelectorAll('.ag-rich-select-field-input,.ag-rich-select input[type=text]').forEach(injBtn);"
+    "}).observe(document.body,{childList:true,subtree:true});"
+    "document.querySelectorAll('.ag-rich-select-field-input,.ag-rich-select input[type=text]').forEach(injBtn);"
+    "})()'>",
+    unsafe_allow_html=True,
+)
 
 # ── Layout ────────────────────────────────────────────────────────────────────
 
