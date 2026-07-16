@@ -115,28 +115,6 @@ def apply_filters(source: pd.DataFrame) -> pd.DataFrame:
 def render_movements(bank_df: pd.DataFrame, bank: str):
     cats = st.session_state.categories
 
-    bank_dir, accepted = BANK_DIRS.get(bank, (None, []))
-    if bank_dir is not None:
-        with st.expander("📤 Upload bank export", expanded=False):
-            ext_list = ", ".join(f".{e}" for e in accepted)
-            st.caption(
-                f"Accepted: **{ext_list}** · Duplicate rows (same date / amount / balance) "
-                "are removed automatically when loading."
-            )
-            uploaded = st.file_uploader(
-                f"Upload {bank} export",
-                type=accepted,
-                key=f"mv_upload_{bank}",
-                label_visibility="collapsed",
-            )
-            if uploaded is not None:
-                bank_dir.mkdir(parents=True, exist_ok=True)
-                dest = bank_dir / uploaded.name
-                dest.write_bytes(uploaded.getbuffer())
-                st.success(f"Saved **{uploaded.name}** — reloading data…")
-                get_raw_data.clear()
-                st.rerun()
-
     display = bank_df[["date", "concept", "amount", "balance", "category", "tx_id"]].copy()
     display["date"] = display["date"].dt.strftime("%Y-%m-%d")
     display = display.reset_index(drop=True)
