@@ -672,47 +672,56 @@ components.html("""
     if (parent.window._agScrollGuardInit) return;
     parent.window._agScrollGuardInit = true;
 
-    var KEY = '_ag_sv';
     var timer;
 
-    function vp() { return parent.document.querySelector('.ag-body-viewport'); }
+    function firstRow(root) {
+        try {
+            var api = root && root.api;
+            if (!api) return null;
+            if (typeof api.getFirstDisplayedRowIndex === 'function') return api.getFirstDisplayedRowIndex();
+            if (typeof api.getFirstDisplayedRow    === 'function') return api.getFirstDisplayedRow();
+        } catch (_) {}
+        return null;
+    }
 
+    // Save which grid and which first-visible row the user clicked on
     parent.document.addEventListener('mousedown', function (e) {
-        if (e.target.closest && e.target.closest('.ag-root-wrapper')) {
-            var v = vp();
-            if (v) sessionStorage.setItem(KEY, String(v.scrollTop));
-        }
+        var root = e.target.closest && e.target.closest('.ag-root-wrapper');
+        if (!root) return;
+        var row = firstRow(root);
+        if (row != null) parent.window._agSS = { root: root, row: row, tries: 0 };
     }, true);
 
     function restore() {
-        var raw = sessionStorage.getItem(KEY);
-        if (raw === null) return;
-        var target = parseInt(raw, 10);
-        var v = vp();
-        if (!v) return;
-        v.scrollTop = target;
-        requestAnimationFrame(function () {
-            var v2 = vp();
-            if (v2) {
-                v2.scrollTop = target;
+        var s = parent.window._agSS;
+        if (!s) return;
+        s.tries++;
+        try {
+            var api = s.root.api;
+            if (api && typeof api.ensureIndexVisible === 'function') {
+                api.ensureIndexVisible(s.row, 'top');
                 setTimeout(function () {
-                    var v3 = vp();
-                    if (v3 && Math.abs(v3.scrollTop - target) < 5) {
-                        sessionStorage.removeItem(KEY);
+                    var now = firstRow(s.root);
+                    if (now != null && Math.abs(now - s.row) <= 1) {
+                        parent.window._agSS = null;        // success
+                    } else if (s.tries < 6) {
+                        setTimeout(restore, 100);           // AG Grid overrode us, retry
+                    } else {
+                        parent.window._agSS = null;
                     }
-                }, 200);
+                }, 80);
+                return;
             }
-        });
+        } catch (_) {}
+        if (s.tries < 6) setTimeout(restore, 150);
+        else parent.window._agSS = null;
     }
 
     new MutationObserver(function (muts) {
-        if (!sessionStorage.getItem(KEY)) return;
-        var added = 0;
-        for (var i = 0; i < muts.length; i++) added += muts[i].addedNodes.length;
-        if (added > 3) {
-            clearTimeout(timer);
-            timer = setTimeout(restore, 300);
-        }
+        if (!parent.window._agSS) return;
+        var n = 0;
+        for (var i = 0; i < muts.length; i++) n += muts[i].addedNodes.length;
+        if (n > 3) { clearTimeout(timer); timer = setTimeout(restore, 300); }
     }).observe(parent.document.body, { childList: true, subtree: true });
 })();
 </script>
