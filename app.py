@@ -6,6 +6,7 @@ from pathlib import Path
 import pandas as pd
 import plotly.express as px
 import streamlit as st
+import streamlit.components.v1 as components
 from data_loader import load_all
 from predictor import predict_next_month
 
@@ -378,7 +379,8 @@ def render_movements(bank_df: pd.DataFrame, bank: str):
         key=f"editor_{bank}",
     )
 
-    changed      = edited["category"] != display["category"]
+    # NaN-safe comparison (both sides filled so NaN==NaN doesn't create spurious changes)
+    changed      = edited["category"].fillna("") != display["category"].fillna("")
     sentinel_sel = changed & (edited["category"] == SENTINEL)
     real_changes = changed & ~sentinel_sel
 
@@ -397,6 +399,7 @@ def render_movements(bank_df: pd.DataFrame, bank: str):
         save_overrides(st.session_state.overrides)
         if apply_all and total_matched > 0:
             st.toast(t("apply_all_toast", n=total_matched), icon="✅")
+        st.rerun()
 
     # Sentinel selected → open popup dialog to name the new category
     if sentinel_sel.any():
@@ -404,14 +407,11 @@ def render_movements(bank_df: pd.DataFrame, bank: str):
             display.loc[idx, "tx_id"] for idx in display.index[sentinel_sel]
         ]
         st.session_state["_dialog_bank"] = bank
-        # Clear editor so sentinel won't re-trigger if dialog is dismissed with X
-        st.session_state.pop(f"editor_{bank}", None)
         if st.session_state.get("lang", "es") == "es":
             _new_cat_dialog_es()
         else:
             _new_cat_dialog_en()
     elif st.session_state.get(f"_pending_new_cat_{bank}"):
-        # Dialog was dismissed with X — orphaned pending, clean it up
         st.session_state.pop(f"_pending_new_cat_{bank}", None)
 
 
@@ -661,6 +661,62 @@ def render_settings():
     st.subheader(t("session_header"))
     st.link_button(t("logout_btn"), url="/logout", type="secondary")
 
+
+# ── Scroll-position preservation for data editors ────────────────────────────
+# Saves the AG Grid viewport scroll on any cell click and restores it after the
+# Streamlit rerun that follows a category change.
+
+components.html("""
+<script>
+(function () {
+    if (parent.window._agScrollGuardInit) return;
+    parent.window._agScrollGuardInit = true;
+
+    var KEY = '_ag_sv';
+    var timer;
+
+    function vp() { return parent.document.querySelector('.ag-body-viewport'); }
+
+    parent.document.addEventListener('mousedown', function (e) {
+        if (e.target.closest && e.target.closest('.ag-root-wrapper')) {
+            var v = vp();
+            if (v) sessionStorage.setItem(KEY, String(v.scrollTop));
+        }
+    }, true);
+
+    function restore() {
+        var raw = sessionStorage.getItem(KEY);
+        if (raw === null) return;
+        var target = parseInt(raw, 10);
+        var v = vp();
+        if (!v) return;
+        v.scrollTop = target;
+        requestAnimationFrame(function () {
+            var v2 = vp();
+            if (v2) {
+                v2.scrollTop = target;
+                setTimeout(function () {
+                    var v3 = vp();
+                    if (v3 && Math.abs(v3.scrollTop - target) < 5) {
+                        sessionStorage.removeItem(KEY);
+                    }
+                }, 200);
+            }
+        });
+    }
+
+    new MutationObserver(function (muts) {
+        if (!sessionStorage.getItem(KEY)) return;
+        var added = 0;
+        for (var i = 0; i < muts.length; i++) added += muts[i].addedNodes.length;
+        if (added > 3) {
+            clearTimeout(timer);
+            timer = setTimeout(restore, 300);
+        }
+    }).observe(parent.document.body, { childList: true, subtree: true });
+})();
+</script>
+""", height=0)
 
 # ── Layout ────────────────────────────────────────────────────────────────────
 
