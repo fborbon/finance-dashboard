@@ -116,11 +116,13 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "apply_all_checkbox": "Aplicar a todos los movimientos similares",
         "apply_all_help": "Asigna la misma categoría a todos los movimientos cuyo concepto comience igual (primeros 20 caracteres).",
         "apply_all_toast": "Categoría aplicada a {n} movimiento(s) similares.",
-        # quick-add category
-        "new_cat_placeholder": "Nueva categoría…",
-        "new_cat_btn": "+ Añadir",
+        # add-category dialog (triggered from dropdown sentinel)
+        "add_cat_sentinel": "➕  Añadir categoría",
+        "add_cat_dialog_title": "Nueva categoría",
+        "new_cat_placeholder": "Nombre de la categoría…",
+        "add_cat_btn_ok": "Añadir",
+        "cancel_btn": "Cancelar",
         "new_cat_added": "Categoría '{name}' añadida.",
-        "new_cat_exists": "La categoría '{name}' ya existe.",
     },
     "en": {
         "page_title": "💳 Bank Dashboard",
@@ -181,10 +183,12 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "apply_all_checkbox": "Apply to all similar movements",
         "apply_all_help": "Assigns the same category to every movement whose concept starts with the same characters (first 20).",
         "apply_all_toast": "Category applied to {n} similar movement(s).",
-        "new_cat_placeholder": "New category…",
-        "new_cat_btn": "+ Add",
+        "add_cat_sentinel": "➕  Add category",
+        "add_cat_dialog_title": "New category",
+        "new_cat_placeholder": "Category name…",
+        "add_cat_btn_ok": "Add",
+        "cancel_btn": "Cancel",
         "new_cat_added": "Category '{name}' added.",
-        "new_cat_exists": "Category '{name}' already exists.",
     },
 }
 
@@ -292,37 +296,56 @@ def apply_filters(source: pd.DataFrame) -> pd.DataFrame:
     return source[mask].copy()
 
 
+# ── Add-category dialog (opened from the dropdown sentinel) ──────────────────
+
+@st.dialog("➕")
+def _add_cat_dialog(tx_id: str, apply_all: bool, concept: str):
+    st.markdown(f"#### {t('add_cat_dialog_title')}")
+    with st.form("_add_cat_form", clear_on_submit=True):
+        new_name = st.text_input(
+            "name",
+            placeholder=t("new_cat_placeholder"),
+            label_visibility="collapsed",
+        )
+        col_ok, col_cancel = st.columns(2)
+        with col_ok:
+            ok = st.form_submit_button(t("add_cat_btn_ok"), use_container_width=True, type="primary")
+        with col_cancel:
+            cancel = st.form_submit_button(t("cancel_btn"), use_container_width=True)
+
+    if ok:
+        name = new_name.strip().lower()
+        if name:
+            if name not in [c.lower() for c in st.session_state.categories]:
+                st.session_state.categories = sorted(st.session_state.categories + [name])
+                save_categories(st.session_state.categories)
+            st.session_state.overrides[tx_id] = name
+            if apply_all:
+                prefix = _concept_prefix(concept)
+                if prefix:
+                    for _, mrow in df[df["concept"].str.strip().str.lower().str.startswith(prefix)].iterrows():
+                        st.session_state.overrides[mrow["tx_id"]] = name
+            save_overrides(st.session_state.overrides)
+            st.toast(t("new_cat_added", name=name), icon="✅")
+        st.rerun()
+
+    if cancel:
+        st.rerun()
+
+
 # ── Bank subtab: movements table ──────────────────────────────────────────────
 
 def render_movements(bank_df: pd.DataFrame, bank: str):
     cats = st.session_state.categories
-
-    # ── Quick-add category ────────────────────────────────────────────────────
-    with st.form(key=f"quick_cat_{bank}", clear_on_submit=True):
-        col_inp, col_btn = st.columns([5, 1])
-        with col_inp:
-            new_cat_name = st.text_input(
-                "cat",
-                placeholder=t("new_cat_placeholder"),
-                label_visibility="collapsed",
-            )
-        with col_btn:
-            submitted = st.form_submit_button(t("new_cat_btn"), use_container_width=True)
-        if submitted:
-            name = new_cat_name.strip().lower()
-            if name and name not in [c.lower() for c in st.session_state.categories]:
-                st.session_state.categories = sorted(st.session_state.categories + [name])
-                save_categories(st.session_state.categories)
-                st.toast(t("new_cat_added", name=name), icon="✅")
-            elif name:
-                st.toast(t("new_cat_exists", name=name), icon="ℹ️")
-            st.rerun()
 
     apply_all = st.checkbox(
         t("apply_all_checkbox"),
         key=f"apply_all_{bank}",
         help=t("apply_all_help"),
     )
+
+    sentinel = t("add_cat_sentinel")
+    cats_with_add = cats + [sentinel]
 
     display = bank_df[["date", "concept", "amount", "balance", "category", "tx_id"]].copy()
     display["date"] = display["date"].dt.strftime("%Y-%m-%d")
@@ -336,7 +359,7 @@ def render_movements(bank_df: pd.DataFrame, bank: str):
             "amount":   st.column_config.NumberColumn(t("col_amount"), disabled=True, format="%.2f", width="small"),
             "balance":  st.column_config.NumberColumn(t("col_balance"),disabled=True, format="%.2f", width="small"),
             "category": st.column_config.SelectboxColumn(
-                t("col_category"), options=cats, required=True, width="medium"
+                t("col_category"), options=cats_with_add, required=True, width="medium"
             ),
         },
         hide_index=True,
@@ -350,8 +373,14 @@ def render_movements(bank_df: pd.DataFrame, bank: str):
         total_matched = 0
         for idx in display.index[changed]:
             new_cat = edited.loc[idx, "category"]
+            if new_cat == sentinel:
+                _add_cat_dialog(
+                    tx_id=display.loc[idx, "tx_id"],
+                    apply_all=apply_all,
+                    concept=display.loc[idx, "concept"],
+                )
+                return  # dialog is open; wait for user input
             st.session_state.overrides[display.loc[idx, "tx_id"]] = new_cat
-
             if apply_all:
                 prefix = _concept_prefix(display.loc[idx, "concept"])
                 if prefix:
