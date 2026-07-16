@@ -430,7 +430,7 @@ for i, bank in enumerate(all_banks):
         st.title(f"🏦 {bank}")
         bank_df = (
             apply_filters(df[df["bank"] == bank])
-            .sort_values("date", ascending=False)
+            .sort_values(["date", "balance"], ascending=[False, True])
             .reset_index(drop=True)
         )
         sub_movements, sub_charts, sub_upload = st.tabs(["📋 Movements", "📈 Charts", "📤 Upload"])
