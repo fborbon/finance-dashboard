@@ -10,7 +10,14 @@ import streamlit as st
 from data_loader import load_all
 from predictor import predict_next_month
 
-st.set_page_config(page_title="Bank Dashboard", layout="wide", page_icon="💳")
+st.set_page_config(page_title="Panel Bancario", layout="wide", page_icon="💳")
+
+# ── Hide Streamlit toolbar (3-dot menu) ───────────────────────────────────────
+
+st.markdown(
+    "<style>#MainMenu{display:none}[data-testid='stToolbar']{display:none}</style>",
+    unsafe_allow_html=True,
+)
 
 BASE = Path(__file__).parent
 CATEGORIES_FILE = BASE / "categories.json"
@@ -32,6 +39,152 @@ BANK_DIRS = {
     "Caixa": (BASE / "Caixa", ["xlsx", "xls"]),
     "Revo":  (BASE / "Revo",  ["csv"]),
 }
+
+# ── Translations ──────────────────────────────────────────────────────────────
+
+_MONTHS_ES = ["enero","febrero","marzo","abril","mayo","junio",
+               "julio","agosto","septiembre","octubre","noviembre","diciembre"]
+
+TRANSLATIONS: dict[str, dict[str, str]] = {
+    "es": {
+        # page title
+        "page_title": "💳 Panel Bancario",
+        # sidebar
+        "filters": "Filtros",
+        "date_range": "Rango de fechas",
+        "hide_transfers": "Ocultar transferencias entre cuentas propias",
+        "language_btn": "🇬🇧 English",
+        # top-level tabs
+        "tab_overview": "📊 Resumen",
+        "tab_categories": "⚙️ Categorías",
+        "tab_settings": "🔒 Ajustes",
+        # bank sub-tabs
+        "subtab_movements": "📋 Movimientos",
+        "subtab_charts": "📈 Gráficos",
+        "subtab_upload": "📤 Subir",
+        # movements table columns
+        "col_date": "Fecha",
+        "col_concept": "Concepto",
+        "col_amount": "Importe (€)",
+        "col_balance": "Saldo (€)",
+        "col_category": "Categoría",
+        # overview
+        "metric_income": "📥 Ingresos",
+        "metric_expenses": "📤 Gastos",
+        "balance_over_time": "Balance a lo largo del tiempo",
+        "monthly_net_flow": "Flujo de caja mensual neto",
+        "expenses_by_cat_year": "Gastos por categoría y año",
+        "income_by_cat_year": "Ingresos por categoría y año",
+        # charts
+        "balance_over_time_bank": "Balance a lo largo del tiempo",
+        "expenses_by_cat": "Gastos por categoría",
+        "no_expenses": "Sin gastos en este período.",
+        "monthly_cash_flow": "Flujo de caja mensual",
+        "next_month_preds": "Predicciones del próximo mes",
+        "pred_caption": "Totales estimados para **{month}** · tendencia lineal sobre los últimos 24 meses · se excluyen categorías con menos de 2 meses de datos",
+        "pred_income": "**Ingresos previstos por categoría**",
+        "pred_expenses": "**Gastos previstos por categoría**",
+        "no_income_history": "Historial insuficiente para predicciones de ingresos.",
+        "no_expense_history": "Historial insuficiente para predicciones de gastos.",
+        # upload
+        "upload_not_configured": "La carga de archivos no está configurada para este banco.",
+        "current_files": "**Archivos actuales en disco:**",
+        "no_files": "Aún no hay archivos de datos.",
+        "accepted_formats": "Formatos aceptados: **{exts}**  •  Las transacciones duplicadas (misma fecha / importe / saldo) se eliminan automáticamente.",
+        "upload_label": "Subir exportación de {bank}",
+        "upload_success": "Guardado **{name}** — recargando datos…",
+        # categories
+        "cat_subheader": "Categorías de gasto",
+        "cat_caption": "Añade filas con el botón ＋ y elimina con el icono de papelera. Los cambios se guardan automáticamente.",
+        "cat_col": "Categoría",
+        "cat_col_name": "Nombre de categoría",
+        "cat_saved": "Guardadas {n} categorías.",
+        # settings
+        "settings_pw_header": "Cambiar contraseña del panel",
+        "new_pw": "Nueva contraseña",
+        "confirm_pw": "Confirmar contraseña",
+        "update_pw_btn": "Actualizar contraseña",
+        "pw_empty": "La contraseña no puede estar vacía.",
+        "pw_mismatch": "Las contraseñas no coinciden.",
+        "pw_short": "La contraseña debe tener al menos 8 caracteres.",
+        "pw_ok": "Contraseña actualizada correctamente.",
+        "pw_err": "Error de htpasswd: {msg}",
+        "pw_fail": "Error: {err}",
+        "session_header": "Sesión",
+        "logout_btn": "🚪 Cerrar sesión",
+    },
+    "en": {
+        "page_title": "💳 Bank Dashboard",
+        "filters": "Filters",
+        "date_range": "Date range",
+        "hide_transfers": "Hide own inter-bank transfers",
+        "language_btn": "🇪🇸 Español",
+        "tab_overview": "📊 Overview",
+        "tab_categories": "⚙️ Categories",
+        "tab_settings": "🔒 Settings",
+        "subtab_movements": "📋 Movements",
+        "subtab_charts": "📈 Charts",
+        "subtab_upload": "📤 Upload",
+        "col_date": "Date",
+        "col_concept": "Concept",
+        "col_amount": "Amount (€)",
+        "col_balance": "Balance (€)",
+        "col_category": "Category",
+        "metric_income": "📥 Income",
+        "metric_expenses": "📤 Expenses",
+        "balance_over_time": "Balance over time",
+        "monthly_net_flow": "Monthly net cash flow",
+        "expenses_by_cat_year": "Expenses by category & year",
+        "income_by_cat_year": "Income by category & year",
+        "balance_over_time_bank": "Balance over time",
+        "expenses_by_cat": "Expenses by category",
+        "no_expenses": "No expenses in this period.",
+        "monthly_cash_flow": "Monthly cash flow",
+        "next_month_preds": "Next month predictions",
+        "pred_caption": "Estimated totals for **{month}** · linear trend over last 24 months · categories with < 2 months of data excluded",
+        "pred_income": "**Predicted income by category**",
+        "pred_expenses": "**Predicted expenses by category**",
+        "no_income_history": "Not enough history for income predictions.",
+        "no_expense_history": "Not enough history for expense predictions.",
+        "upload_not_configured": "File upload not configured for this bank.",
+        "current_files": "**Current files on disk:**",
+        "no_files": "No data files found yet.",
+        "accepted_formats": "Accepted formats: **{exts}**  •  Duplicate transactions (same date / amount / balance) are removed automatically.",
+        "upload_label": "Upload {bank} export",
+        "upload_success": "Saved **{name}** — reloading data…",
+        "cat_subheader": "Expenditure categories",
+        "cat_caption": "Add rows with the ＋ button, delete with the trash icon. Changes are saved automatically.",
+        "cat_col": "Category",
+        "cat_col_name": "Category name",
+        "cat_saved": "Saved {n} categories.",
+        "settings_pw_header": "Change dashboard password",
+        "new_pw": "New password",
+        "confirm_pw": "Confirm password",
+        "update_pw_btn": "Update password",
+        "pw_empty": "Password cannot be empty.",
+        "pw_mismatch": "Passwords do not match.",
+        "pw_short": "Password must be at least 8 characters.",
+        "pw_ok": "Password updated successfully.",
+        "pw_err": "htpasswd error: {msg}",
+        "pw_fail": "Failed: {err}",
+        "session_header": "Session",
+        "logout_btn": "🚪 Log out",
+    },
+}
+
+
+def t(key: str, **kwargs) -> str:
+    lang = st.session_state.get("lang", "es")
+    text = TRANSLATIONS[lang].get(key, TRANSLATIONS["en"].get(key, key))
+    return text.format(**kwargs) if kwargs else text
+
+
+def _next_month_label(lang: str) -> str:
+    ts = (pd.Timestamp.now().to_period("M") + 1).to_timestamp()
+    if lang == "es":
+        return f"{_MONTHS_ES[ts.month - 1].capitalize()} {ts.year}"
+    return ts.strftime("%B %Y")
+
 
 # ── Persistence helpers ───────────────────────────────────────────────────────
 
@@ -83,6 +236,8 @@ def apply_overrides(raw: pd.DataFrame, overrides: dict) -> pd.DataFrame:
 
 # ── Session state init ────────────────────────────────────────────────────────
 
+if "lang" not in st.session_state:
+    st.session_state.lang = "es"
 if "categories" not in st.session_state:
     st.session_state.categories = load_categories()
 if "overrides" not in st.session_state:
@@ -92,15 +247,20 @@ raw_df = get_raw_data()
 df = apply_overrides(raw_df, st.session_state.overrides)
 all_banks = sorted(df["bank"].unique())
 
-# ── Sidebar filters ───────────────────────────────────────────────────────────
+# ── Sidebar ───────────────────────────────────────────────────────────────────
 
-st.sidebar.header("Filters")
+st.sidebar.header(t("filters"))
 date_min = df["date"].min().date()
 date_max = df["date"].max().date()
-date_range = st.sidebar.date_input("Date range", value=[date_min, date_max])
+date_range = st.sidebar.date_input(t("date_range"), value=[date_min, date_max])
 start_date = date_range[0] if len(date_range) > 0 else date_min
 end_date = date_range[1] if len(date_range) > 1 else date_max
-hide_transfers = st.sidebar.checkbox("Hide own inter-bank transfers", value=True)
+hide_transfers = st.sidebar.checkbox(t("hide_transfers"), value=True)
+
+st.sidebar.divider()
+if st.sidebar.button(t("language_btn"), use_container_width=True):
+    st.session_state.lang = "en" if st.session_state.lang == "es" else "es"
+    st.rerun()
 
 
 def apply_filters(source: pd.DataFrame) -> pd.DataFrame:
@@ -122,12 +282,12 @@ def render_movements(bank_df: pd.DataFrame, bank: str):
     edited = st.data_editor(
         display.drop(columns=["tx_id"]),
         column_config={
-            "date": st.column_config.TextColumn("Date", disabled=True, width="small"),
-            "concept": st.column_config.TextColumn("Concept", disabled=True, width="large"),
-            "amount": st.column_config.NumberColumn("Amount (€)", disabled=True, format="%.2f", width="small"),
-            "balance": st.column_config.NumberColumn("Balance (€)", disabled=True, format="%.2f", width="small"),
+            "date":     st.column_config.TextColumn(t("col_date"),     disabled=True, width="small"),
+            "concept":  st.column_config.TextColumn(t("col_concept"),  disabled=True, width="large"),
+            "amount":   st.column_config.NumberColumn(t("col_amount"), disabled=True, format="%.2f", width="small"),
+            "balance":  st.column_config.NumberColumn(t("col_balance"),disabled=True, format="%.2f", width="small"),
             "category": st.column_config.SelectboxColumn(
-                "Category", options=cats, required=True, width="medium"
+                t("col_category"), options=cats, required=True, width="medium"
             ),
         },
         hide_index=True,
@@ -152,7 +312,7 @@ def render_charts(bank_df: pd.DataFrame, bank: str):
     col_l, col_r = st.columns(2)
 
     with col_l:
-        st.subheader("Balance over time")
+        st.subheader(t("balance_over_time_bank"))
         bal = bank_df.dropna(subset=["balance"]).copy()
         bal["day"] = bal["date"].dt.normalize()
         daily = bal.groupby("day")["balance"].last().reset_index().rename(columns={"day": "date"})
@@ -161,10 +321,10 @@ def render_charts(bank_df: pd.DataFrame, bank: str):
         st.plotly_chart(fig, use_container_width=True)
 
     with col_r:
-        st.subheader("Expenses by category")
+        st.subheader(t("expenses_by_cat"))
         exp = bank_df[bank_df["amount"] < 0]
         if exp.empty:
-            st.info("No expenses in this period.")
+            st.info(t("no_expenses"))
         else:
             by_cat = exp.groupby("category")["amount"].sum().abs().reset_index()
             fig2 = px.pie(by_cat, values="amount", names="category", hole=0.35, height=380)
@@ -172,7 +332,7 @@ def render_charts(bank_df: pd.DataFrame, bank: str):
             fig2.update_layout(showlegend=False)
             st.plotly_chart(fig2, use_container_width=True)
 
-    st.subheader("Monthly cash flow")
+    st.subheader(t("monthly_cash_flow"))
     monthly = (
         bank_df.assign(month=bank_df["date"].dt.to_period("M").dt.to_timestamp())
         .groupby("month")["amount"].sum()
@@ -184,16 +344,15 @@ def render_charts(bank_df: pd.DataFrame, bank: str):
     st.plotly_chart(fig3, use_container_width=True)
 
     st.divider()
-    st.subheader("Next month predictions")
+    st.subheader(t("next_month_preds"))
 
     preds = predict_next_month(df[df["bank"] == bank])
-    next_month = (pd.Timestamp.now().to_period("M") + 1).to_timestamp().strftime("%B %Y")
-    st.caption(f"Estimated totals for **{next_month}** · linear trend over last 24 months · "
-               "categories with < 2 months of data excluded")
+    next_month = _next_month_label(st.session_state.lang)
+    st.caption(t("pred_caption", month=next_month))
 
     col_pl, col_pr = st.columns(2)
     with col_pl:
-        st.markdown("**Predicted income by category**")
+        st.markdown(t("pred_income"))
         if preds["income"]:
             inc_df = (
                 pd.DataFrame(preds["income"].items(), columns=["category", "amount"])
@@ -207,10 +366,10 @@ def render_charts(bank_df: pd.DataFrame, bank: str):
             fig_pi.update_layout(margin={"l": 0, "r": 0, "t": 10, "b": 0})
             st.plotly_chart(fig_pi, use_container_width=True)
         else:
-            st.info("Not enough history for income predictions.")
+            st.info(t("no_income_history"))
 
     with col_pr:
-        st.markdown("**Predicted expenses by category**")
+        st.markdown(t("pred_expenses"))
         if preds["expenses"]:
             exp_df = (
                 pd.DataFrame(preds["expenses"].items(), columns=["category", "amount"])
@@ -224,7 +383,7 @@ def render_charts(bank_df: pd.DataFrame, bank: str):
             fig_pe.update_layout(margin={"l": 0, "r": 0, "t": 10, "b": 0})
             st.plotly_chart(fig_pe, use_container_width=True)
         else:
-            st.info("Not enough history for expense predictions.")
+            st.info(t("no_expense_history"))
 
 
 # ── Bank subtab: file upload ──────────────────────────────────────────────────
@@ -232,26 +391,23 @@ def render_charts(bank_df: pd.DataFrame, bank: str):
 def render_upload(bank: str):
     bank_dir, accepted = BANK_DIRS.get(bank, (None, []))
     if bank_dir is None:
-        st.info("File upload not configured for this bank.")
+        st.info(t("upload_not_configured"))
         return
 
     existing = sorted(bank_dir.glob("*.*")) if bank_dir.exists() else []
     if existing:
-        st.caption("**Current files on disk:**")
+        st.caption(t("current_files"))
         for f in existing:
             st.text(f"  {f.name}  ({f.stat().st_size / 1024:.1f} KB)")
     else:
-        st.caption("No data files found yet.")
+        st.caption(t("no_files"))
 
     st.divider()
     ext_list = ", ".join(f".{e}" for e in accepted)
-    st.caption(
-        f"Accepted formats: **{ext_list}**  •  "
-        "Duplicate transactions (same date / amount / description) are removed automatically."
-    )
+    st.caption(t("accepted_formats", exts=ext_list))
 
     uploaded = st.file_uploader(
-        f"Upload {bank} export",
+        t("upload_label", bank=bank),
         type=accepted,
         key=f"upload_{bank}",
         label_visibility="collapsed",
@@ -261,7 +417,7 @@ def render_upload(bank: str):
         bank_dir.mkdir(parents=True, exist_ok=True)
         dest = bank_dir / uploaded.name
         dest.write_bytes(uploaded.getbuffer())
-        st.success(f"Saved **{uploaded.name}** — reloading data…")
+        st.success(t("upload_success", name=uploaded.name))
         get_raw_data.clear()
         st.rerun()
 
@@ -271,23 +427,21 @@ def render_upload(bank: str):
 def render_overview():
     filtered = apply_filters(df)
 
-    # Metrics
     cols = st.columns(5)
     for i, bank in enumerate(all_banks):
         last = df[df["bank"] == bank].dropna(subset=["balance"]).sort_values("date")
         if not last.empty:
             cols[i].metric(f"🏦 {bank}", f"€{last['balance'].iloc[-1]:,.2f}")
-    total_in = filtered[filtered["amount"] > 0]["amount"].sum()
+    total_in  = filtered[filtered["amount"] > 0]["amount"].sum()
     total_out = filtered[filtered["amount"] < 0]["amount"].sum()
-    cols[3].metric("📥 Income", f"€{total_in:,.0f}")
-    cols[4].metric("📤 Expenses", f"€{abs(total_out):,.0f}")
+    cols[3].metric(t("metric_income"),   f"€{total_in:,.0f}")
+    cols[4].metric(t("metric_expenses"), f"€{abs(total_out):,.0f}")
 
     st.divider()
 
-    # Balance over time + monthly flow
     col_l, col_r = st.columns(2)
     with col_l:
-        st.subheader("Balance over time")
+        st.subheader(t("balance_over_time"))
         bal = df[df["bank"].isin(all_banks)].dropna(subset=["balance"]).copy()
         bal["day"] = bal["date"].dt.normalize()
         daily = (
@@ -301,7 +455,7 @@ def render_overview():
         st.plotly_chart(fig, use_container_width=True)
 
     with col_r:
-        st.subheader("Monthly net cash flow")
+        st.subheader(t("monthly_net_flow"))
         monthly = (
             filtered.assign(month=filtered["date"].dt.to_period("M").dt.to_timestamp())
             .groupby(["bank", "month"])["amount"].sum()
@@ -314,10 +468,9 @@ def render_overview():
         fig2.update_layout(legend_title_text="")
         st.plotly_chart(fig2, use_container_width=True)
 
-    # Expenses + income breakdowns
     col_l2, col_r2 = st.columns(2)
     with col_l2:
-        st.subheader("Expenses by category & year")
+        st.subheader(t("expenses_by_cat_year"))
         exp = filtered[filtered["amount"] < 0].copy()
         exp["year"] = exp["date"].dt.year.astype(str)
         by_cat = exp.groupby(["category", "year"])["amount"].sum().abs().reset_index()
@@ -327,7 +480,7 @@ def render_overview():
         st.plotly_chart(fig3, use_container_width=True)
 
     with col_r2:
-        st.subheader("Income by category & year")
+        st.subheader(t("income_by_cat_year"))
         inc = filtered[filtered["amount"] > 0].copy()
         inc["year"] = inc["date"].dt.year.astype(str)
         by_cat2 = inc.groupby(["category", "year"])["amount"].sum().reset_index()
@@ -340,45 +493,45 @@ def render_overview():
 # ── Categories manager ────────────────────────────────────────────────────────
 
 def render_categories():
-    st.subheader("Expenditure categories")
-    st.caption("Add rows with the ＋ button, delete with the trash icon. Changes are saved automatically.")
+    st.subheader(t("cat_subheader"))
+    st.caption(t("cat_caption"))
 
-    cat_df = pd.DataFrame({"Category": st.session_state.categories})
+    cat_df = pd.DataFrame({t("cat_col"): st.session_state.categories})
 
     edited = st.data_editor(
         cat_df,
         num_rows="dynamic",
-        column_config={"Category": st.column_config.TextColumn("Category name", required=True)},
+        column_config={t("cat_col"): st.column_config.TextColumn(t("cat_col_name"), required=True)},
         hide_index=True,
         use_container_width=True,
         height=520,
         key="categories_editor",
     )
 
-    new_cats = [c for c in edited["Category"].dropna().tolist() if str(c).strip()]
+    new_cats = [c for c in edited[t("cat_col")].dropna().tolist() if str(c).strip()]
     if sorted(new_cats) != sorted(st.session_state.categories):
         st.session_state.categories = sorted(new_cats)
         save_categories(new_cats)
-        st.toast(f"Saved {len(new_cats)} categories.", icon="✅")
+        st.toast(t("cat_saved", n=len(new_cats)), icon="✅")
         st.rerun()
 
 
-# ── Settings ─────────────────────────────────────────────────────────────────
+# ── Settings ──────────────────────────────────────────────────────────────────
 
 def render_settings():
-    st.subheader("Change dashboard password")
+    st.subheader(t("settings_pw_header"))
     with st.form("change_pw", clear_on_submit=True):
-        new_pw  = st.text_input("New password",     type="password")
-        conf_pw = st.text_input("Confirm password", type="password")
-        submitted = st.form_submit_button("Update password")
+        new_pw  = st.text_input(t("new_pw"),     type="password")
+        conf_pw = st.text_input(t("confirm_pw"), type="password")
+        submitted = st.form_submit_button(t("update_pw_btn"))
 
     if submitted:
         if not new_pw:
-            st.error("Password cannot be empty.")
+            st.error(t("pw_empty"))
         elif new_pw != conf_pw:
-            st.error("Passwords do not match.")
+            st.error(t("pw_mismatch"))
         elif len(new_pw) < 8:
-            st.error("Password must be at least 8 characters.")
+            st.error(t("pw_short"))
         else:
             try:
                 result = subprocess.run(
@@ -387,24 +540,28 @@ def render_settings():
                     capture_output=True,
                 )
                 if result.returncode == 0:
-                    st.success("Password updated successfully.")
+                    st.success(t("pw_ok"))
                 else:
-                    st.error(f"htpasswd error: {result.stderr.decode().strip()}")
+                    st.error(t("pw_err", msg=result.stderr.decode().strip()))
             except Exception as e:
-                st.error(f"Failed: {e}")
+                st.error(t("pw_fail", err=e))
 
     st.divider()
-    st.subheader("Session")
-    st.link_button("🚪 Log out", url="/logout", type="secondary")
+    st.subheader(t("session_header"))
+    st.link_button(t("logout_btn"), url="/logout", type="secondary")
 
 
 # ── Layout ────────────────────────────────────────────────────────────────────
 
-tab_labels = ["📊 Overview"] + [f"🏦 {b}" for b in all_banks] + ["⚙️ Categories", "🔒 Settings"]
+tab_labels = (
+    [t("tab_overview")]
+    + [f"🏦 {b}" for b in all_banks]
+    + [t("tab_categories"), t("tab_settings")]
+)
 tabs = st.tabs(tab_labels)
 
 with tabs[0]:
-    st.title("💳 Bank Dashboard")
+    st.title(t("page_title"))
     render_overview()
 
 for i, bank in enumerate(all_banks):
@@ -415,7 +572,9 @@ for i, bank in enumerate(all_banks):
             .sort_values(["date", "balance"], ascending=[False, True])
             .reset_index(drop=True)
         )
-        sub_movements, sub_charts, sub_upload = st.tabs(["📋 Movements", "📈 Charts", "📤 Upload"])
+        sub_movements, sub_charts, sub_upload = st.tabs([
+            t("subtab_movements"), t("subtab_charts"), t("subtab_upload"),
+        ])
         with sub_movements:
             render_movements(bank_df, bank)
         with sub_charts:
