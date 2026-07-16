@@ -393,6 +393,10 @@ def render_settings():
             except Exception as e:
                 st.error(f"Failed: {e}")
 
+    st.divider()
+    st.subheader("Session")
+    st.link_button("🚪 Log out", url="/logout", type="secondary")
+
 
 # ── Layout ────────────────────────────────────────────────────────────────────
 
