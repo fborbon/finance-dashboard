@@ -363,7 +363,7 @@ def render_movements(bank_df: pd.DataFrame, bank: str):
     pending_ids = st.session_state.get(f"_pending_new_cat_{bank}", [])
     if pending_ids:
         st.divider()
-        with st.form(key=f"new_cat_form_{bank}", clear_on_submit=True):
+        with st.form(key=f"new_cat_form_{bank}"):
             col_inp, col_add = st.columns([6, 1])
             with col_inp:
                 new_name = st.text_input(
