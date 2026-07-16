@@ -1,0 +1,15 @@
+[Unit]
+Description=Personal Finance Dashboard (Streamlit)
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/finance-dashboard
+ExecStart=/home/ubuntu/finance-dashboard/venv/bin/streamlit run app.py
+Restart=always
+RestartSec=10
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target

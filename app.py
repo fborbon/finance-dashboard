@@ -1,5 +1,6 @@
 import hashlib
 import json
+import subprocess
 from pathlib import Path
 
 import pandas as pd
@@ -15,8 +16,22 @@ BASE = Path(__file__).parent
 CATEGORIES_FILE = BASE / "categories.json"
 OVERRIDES_FILE = BASE / "category_overrides.json"
 
-BANK_COLORS = {"Bank1": "#1f77b4", "Bank2": "#ff7f0e", "Bank3": "#9467bd"}
+BANK_COLORS = {
+    "Bank1": "#1f77b4", "Bank2": "#ff7f0e", "Bank3": "#9467bd",
+    "Rural": "#1f77b4", "Caixa": "#ff7f0e", "Revo": "#9467bd",
+}
 TRANSFER_CATS = {"own transfer", "transfer"}
+
+HTPASSWD_FILE = Path("/etc/nginx/.htpasswd_banking")
+
+BANK_DIRS = {
+    "Bank1": (BASE / "Bank1", ["xlsx", "xls"]),
+    "Bank2": (BASE / "Bank2", ["xlsx", "xls"]),
+    "Bank3": (BASE / "Bank3", ["csv"]),
+    "Rural": (BASE / "Rural", ["xlsx", "xls"]),
+    "Caixa": (BASE / "Caixa", ["xlsx", "xls"]),
+    "Revo":  (BASE / "Revo",  ["csv"]),
+}
 
 # ── Persistence helpers ───────────────────────────────────────────────────────
 
@@ -99,6 +114,28 @@ def apply_filters(source: pd.DataFrame) -> pd.DataFrame:
 
 def render_movements(bank_df: pd.DataFrame, bank: str):
     cats = st.session_state.categories
+
+    bank_dir, accepted = BANK_DIRS.get(bank, (None, []))
+    if bank_dir is not None:
+        with st.expander("📤 Upload bank export", expanded=False):
+            ext_list = ", ".join(f".{e}" for e in accepted)
+            st.caption(
+                f"Accepted: **{ext_list}** · Duplicate rows (same date / amount / balance) "
+                "are removed automatically when loading."
+            )
+            uploaded = st.file_uploader(
+                f"Upload {bank} export",
+                type=accepted,
+                key=f"mv_upload_{bank}",
+                label_visibility="collapsed",
+            )
+            if uploaded is not None:
+                bank_dir.mkdir(parents=True, exist_ok=True)
+                dest = bank_dir / uploaded.name
+                dest.write_bytes(uploaded.getbuffer())
+                st.success(f"Saved **{uploaded.name}** — reloading data…")
+                get_raw_data.clear()
+                st.rerun()
 
     display = bank_df[["date", "concept", "amount", "balance", "category", "tx_id"]].copy()
     display["date"] = display["date"].dt.strftime("%Y-%m-%d")
@@ -212,6 +249,45 @@ def render_charts(bank_df: pd.DataFrame, bank: str):
             st.info("Not enough history for expense predictions.")
 
 
+# ── Bank subtab: file upload ──────────────────────────────────────────────────
+
+def render_upload(bank: str):
+    bank_dir, accepted = BANK_DIRS.get(bank, (None, []))
+    if bank_dir is None:
+        st.info("File upload not configured for this bank.")
+        return
+
+    existing = sorted(bank_dir.glob("*.*")) if bank_dir.exists() else []
+    if existing:
+        st.caption("**Current files on disk:**")
+        for f in existing:
+            st.text(f"  {f.name}  ({f.stat().st_size / 1024:.1f} KB)")
+    else:
+        st.caption("No data files found yet.")
+
+    st.divider()
+    ext_list = ", ".join(f".{e}" for e in accepted)
+    st.caption(
+        f"Accepted formats: **{ext_list}**  •  "
+        "Duplicate transactions (same date / amount / description) are removed automatically."
+    )
+
+    uploaded = st.file_uploader(
+        f"Upload {bank} export",
+        type=accepted,
+        key=f"upload_{bank}",
+        label_visibility="collapsed",
+    )
+
+    if uploaded is not None:
+        bank_dir.mkdir(parents=True, exist_ok=True)
+        dest = bank_dir / uploaded.name
+        dest.write_bytes(uploaded.getbuffer())
+        st.success(f"Saved **{uploaded.name}** — reloading data…")
+        get_raw_data.clear()
+        st.rerun()
+
+
 # ── Overview charts ───────────────────────────────────────────────────────────
 
 def render_overview():
@@ -309,9 +385,40 @@ def render_categories():
         st.rerun()
 
 
+# ── Settings ─────────────────────────────────────────────────────────────────
+
+def render_settings():
+    st.subheader("Change dashboard password")
+    with st.form("change_pw", clear_on_submit=True):
+        new_pw  = st.text_input("New password",     type="password")
+        conf_pw = st.text_input("Confirm password", type="password")
+        submitted = st.form_submit_button("Update password")
+
+    if submitted:
+        if not new_pw:
+            st.error("Password cannot be empty.")
+        elif new_pw != conf_pw:
+            st.error("Passwords do not match.")
+        elif len(new_pw) < 8:
+            st.error("Password must be at least 8 characters.")
+        else:
+            try:
+                result = subprocess.run(
+                    ["/usr/bin/htpasswd", "-i", str(HTPASSWD_FILE), "admin"],
+                    input=new_pw.encode(),
+                    capture_output=True,
+                )
+                if result.returncode == 0:
+                    st.success("Password updated successfully.")
+                else:
+                    st.error(f"htpasswd error: {result.stderr.decode().strip()}")
+            except Exception as e:
+                st.error(f"Failed: {e}")
+
+
 # ── Layout ────────────────────────────────────────────────────────────────────
 
-tab_labels = ["📊 Overview"] + [f"🏦 {b}" for b in all_banks] + ["⚙️ Categories"]
+tab_labels = ["📊 Overview"] + [f"🏦 {b}" for b in all_banks] + ["⚙️ Categories", "🔒 Settings"]
 tabs = st.tabs(tab_labels)
 
 with tabs[0]:
@@ -326,11 +433,16 @@ for i, bank in enumerate(all_banks):
             .sort_values("date", ascending=False)
             .reset_index(drop=True)
         )
-        sub_movements, sub_charts = st.tabs(["📋 Movements", "📈 Charts"])
+        sub_movements, sub_charts, sub_upload = st.tabs(["📋 Movements", "📈 Charts", "📤 Upload"])
         with sub_movements:
             render_movements(bank_df, bank)
         with sub_charts:
             render_charts(bank_df, bank)
+        with sub_upload:
+            render_upload(bank)
+
+with tabs[-2]:
+    render_categories()
 
 with tabs[-1]:
-    render_categories()
+    render_settings()

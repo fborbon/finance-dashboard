@@ -1,0 +1,11 @@
+[server]
+port = 8502
+baseUrlPath = "app"
+headless = true
+fileWatcherType = "none"
+
+[browser]
+gatherUsageStats = false
+
+[theme]
+base = "dark"
