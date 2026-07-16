@@ -18,7 +18,7 @@ st.markdown(
     "<style>"
     "#MainMenu{display:none}"
     "[data-testid='stToolbar']{display:none}"
-    "div[class*='st-key-_new_cat_input']{"
+    "div[class*='st-key-_catbridge']{"
     "position:absolute!important;top:-9999px!important;left:-9999px!important;"
     "opacity:0!important;width:1px!important;height:1px!important;overflow:hidden!important}"
     "</style>",
@@ -605,29 +605,29 @@ def render_settings():
 # ── Dropdown + button: JS bridge for inline category creation ────────────────
 
 # If JS has written a new category name via the bridge input, process it.
-_bridge_val = st.session_state.get("_new_cat_input", "")
+_bridge_val = st.session_state.get("_catbridge", "")
 if _bridge_val:
     _name = _bridge_val.strip().lower()
     if _name and _name not in [c.lower() for c in st.session_state.categories]:
         st.session_state.categories = sorted(st.session_state.categories + [_name])
         save_categories(st.session_state.categories)
         st.toast(t("new_cat_added", name=_name), icon="✅")
-    del st.session_state["_new_cat_input"]
+    del st.session_state["_catbridge"]
     st.rerun()
 
 # Hidden text input — positioned off-screen via CSS; JS uses it as a signal channel.
-st.text_input("", key="_new_cat_input", label_visibility="collapsed", placeholder="__cat_bridge__")
+# Key and placeholder use no double-underscores so Markdown doesn't bold-process them.
+st.text_input("", key="_catbridge", label_visibility="collapsed", placeholder="catbridge")
 
-# Inject JS via onerror on a hidden img — runs in the main Streamlit page context
-# (no iframe / cross-origin restrictions). Uses only single-quoted JS strings so the
-# snippet is safe inside the double-quoted onerror HTML attribute without any escaping.
+# Inject JS via onerror on a hidden img (runs in the main page context, no iframe).
+# onerror uses double quotes; all JS strings use single quotes — zero quoting conflict.
 st.markdown(
-    "<img src='__x__' style='display:none' onerror='"
+    '<img src="x" style="display:none" onerror="'
     "(function(){"
     "if(window._catBridgeInit)return;"
     "window._catBridgeInit=true;"
     "function trigBridge(x){"
-    "var i=document.querySelector('input[placeholder=__cat_bridge__]');"
+    "var i=document.querySelector('input[placeholder=catbridge]');"
     "if(!i)return;"
     "Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(i,x);"
     "i.dispatchEvent(new Event('input',{bubbles:true}));"
@@ -653,7 +653,7 @@ st.markdown(
     "document.querySelectorAll('.ag-rich-select-field-input,.ag-rich-select input[type=text]').forEach(injBtn);"
     "}).observe(document.body,{childList:true,subtree:true});"
     "document.querySelectorAll('.ag-rich-select-field-input,.ag-rich-select input[type=text]').forEach(injBtn);"
-    "})()'>",
+    '})()">',
     unsafe_allow_html=True,
 )
 
