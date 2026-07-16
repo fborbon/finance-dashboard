@@ -117,15 +117,16 @@ def _categorize(concept: str) -> str:
 # ── Deduplication helper ──────────────────────────────────────────────────────
 
 def _dedup(df: pd.DataFrame) -> pd.DataFrame:
-    # Key: bank + date + amount + balance (2 dp each).
-    # Balance is the running total after each transaction, so it uniquely
-    # identifies an event in an account even when concept text differs across
-    # file formats (e.g. old vs new Caixa export covering the same period).
-    # Falls back to including concept when balance is NaN (Revolut-style CSVs).
+    # When balance is present it uniquely identifies a transaction in the account
+    # (running total after each event), so the key is just bank+amount+balance —
+    # no date. Omitting the date makes dedup robust to timestamp drift between
+    # exports (timezone suffix, seconds rounding, Started vs Completed date, etc.).
+    # Falls back to bank+date+amount+concept when balance is NaN.
     def _row_key(r):
         bal = r["balance"]
-        bal_str = f"{bal:.2f}" if pd.notna(bal) else str(r["concept"])
-        return f"{r['bank']}|{pd.Timestamp(r['date']).isoformat()}|{r['amount']:.2f}|{bal_str}"
+        if pd.notna(bal):
+            return f"{r['bank']}|{r['amount']:.2f}|{bal:.2f}"
+        return f"{r['bank']}|{pd.Timestamp(r['date']).isoformat()}|{r['amount']:.2f}|{str(r['concept'])}"
 
     ids = df.apply(lambda r: hashlib.md5(_row_key(r).encode()).hexdigest(), axis=1)
     return df[~ids.duplicated(keep="first")].reset_index(drop=True)
