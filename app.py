@@ -112,6 +112,10 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "pw_fail": "Error: {err}",
         "session_header": "Sesión",
         "logout_btn": "🚪 Cerrar sesión",
+        # bulk category
+        "apply_all_checkbox": "Aplicar a todos los movimientos similares",
+        "apply_all_help": "Asigna la misma categoría a todos los movimientos cuyo concepto comience igual (primeros 20 caracteres).",
+        "apply_all_toast": "Categoría aplicada a {n} movimiento(s) similares.",
     },
     "en": {
         "page_title": "💳 Bank Dashboard",
@@ -169,6 +173,9 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "pw_fail": "Failed: {err}",
         "session_header": "Session",
         "logout_btn": "🚪 Log out",
+        "apply_all_checkbox": "Apply to all similar movements",
+        "apply_all_help": "Assigns the same category to every movement whose concept starts with the same characters (first 20).",
+        "apply_all_toast": "Category applied to {n} similar movement(s).",
     },
 }
 
@@ -177,6 +184,12 @@ def t(key: str, **kwargs) -> str:
     lang = st.session_state.get("lang", "es")
     text = TRANSLATIONS[lang].get(key, TRANSLATIONS["en"].get(key, key))
     return text.format(**kwargs) if kwargs else text
+
+
+PREFIX_LEN = 20  # characters used to match "same kind" concepts
+
+def _concept_prefix(concept: str) -> str:
+    return str(concept).strip().lower()[:PREFIX_LEN]
 
 
 def _next_month_label(lang: str) -> str:
@@ -275,6 +288,12 @@ def apply_filters(source: pd.DataFrame) -> pd.DataFrame:
 def render_movements(bank_df: pd.DataFrame, bank: str):
     cats = st.session_state.categories
 
+    apply_all = st.checkbox(
+        t("apply_all_checkbox"),
+        key=f"apply_all_{bank}",
+        help=t("apply_all_help"),
+    )
+
     display = bank_df[["date", "concept", "amount", "balance", "category", "tx_id"]].copy()
     display["date"] = display["date"].dt.strftime("%Y-%m-%d")
     display = display.reset_index(drop=True)
@@ -298,9 +317,22 @@ def render_movements(bank_df: pd.DataFrame, bank: str):
 
     changed = edited["category"] != display["category"]
     if changed.any():
+        total_matched = 0
         for idx in display.index[changed]:
-            st.session_state.overrides[display.loc[idx, "tx_id"]] = edited.loc[idx, "category"]
+            new_cat = edited.loc[idx, "category"]
+            st.session_state.overrides[display.loc[idx, "tx_id"]] = new_cat
+
+            if apply_all:
+                prefix = _concept_prefix(display.loc[idx, "concept"])
+                if prefix:
+                    matches = df[df["concept"].str.strip().str.lower().str.startswith(prefix)]
+                    for _, mrow in matches.iterrows():
+                        st.session_state.overrides[mrow["tx_id"]] = new_cat
+                    total_matched += len(matches)
+
         save_overrides(st.session_state.overrides)
+        if apply_all and total_matched > 0:
+            st.toast(t("apply_all_toast", n=total_matched), icon="✅")
         st.rerun()
 
 
