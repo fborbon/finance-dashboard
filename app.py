@@ -116,6 +116,11 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "apply_all_checkbox": "Aplicar a todos los movimientos similares",
         "apply_all_help": "Asigna la misma categoría a todos los movimientos cuyo concepto comience igual (primeros 20 caracteres).",
         "apply_all_toast": "Categoría aplicada a {n} movimiento(s) similares.",
+        # quick-add category
+        "new_cat_placeholder": "Nueva categoría…",
+        "new_cat_btn": "+ Añadir",
+        "new_cat_added": "Categoría '{name}' añadida.",
+        "new_cat_exists": "La categoría '{name}' ya existe.",
     },
     "en": {
         "page_title": "💳 Bank Dashboard",
@@ -176,6 +181,10 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "apply_all_checkbox": "Apply to all similar movements",
         "apply_all_help": "Assigns the same category to every movement whose concept starts with the same characters (first 20).",
         "apply_all_toast": "Category applied to {n} similar movement(s).",
+        "new_cat_placeholder": "New category…",
+        "new_cat_btn": "+ Add",
+        "new_cat_added": "Category '{name}' added.",
+        "new_cat_exists": "Category '{name}' already exists.",
     },
 }
 
@@ -287,6 +296,27 @@ def apply_filters(source: pd.DataFrame) -> pd.DataFrame:
 
 def render_movements(bank_df: pd.DataFrame, bank: str):
     cats = st.session_state.categories
+
+    # ── Quick-add category ────────────────────────────────────────────────────
+    with st.form(key=f"quick_cat_{bank}", clear_on_submit=True):
+        col_inp, col_btn = st.columns([5, 1])
+        with col_inp:
+            new_cat_name = st.text_input(
+                "cat",
+                placeholder=t("new_cat_placeholder"),
+                label_visibility="collapsed",
+            )
+        with col_btn:
+            submitted = st.form_submit_button(t("new_cat_btn"), use_container_width=True)
+        if submitted:
+            name = new_cat_name.strip().lower()
+            if name and name not in [c.lower() for c in st.session_state.categories]:
+                st.session_state.categories = sorted(st.session_state.categories + [name])
+                save_categories(st.session_state.categories)
+                st.toast(t("new_cat_added", name=name), icon="✅")
+            elif name:
+                st.toast(t("new_cat_exists", name=name), icon="ℹ️")
+            st.rerun()
 
     apply_all = st.checkbox(
         t("apply_all_checkbox"),
