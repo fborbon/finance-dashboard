@@ -379,9 +379,25 @@ def render_movements(bank_df: pd.DataFrame, bank: str):
         value=True,
     )
 
+    # ── Column filters ────────────────────────────────────────────────────────
+    fc1, fc2, fc3 = st.columns([3, 2, 5])
+    with fc1:
+        f_concept = st.text_input("", placeholder=f"🔍 {t('col_concept')}",
+                                  key=f"f_concept_{bank}", label_visibility="collapsed")
+    with fc2:
+        f_cat = st.text_input("", placeholder=f"🔍 {t('col_category')}",
+                              key=f"f_cat_{bank}", label_visibility="collapsed")
+
     display = bank_df[["date", "concept", "amount", "balance", "category", "tx_id"]].copy()
     display["date"] = display["date"].dt.strftime("%Y-%m-%d")
     display = display.reset_index(drop=True)
+
+    if f_concept:
+        mask = display["concept"].str.lower().str.contains(f_concept.lower(), na=False)
+        display = display[mask].reset_index(drop=True)
+    if f_cat:
+        mask = display["category"].str.lower().str.contains(f_cat.lower(), na=False)
+        display = display[mask].reset_index(drop=True)
 
     edited = st.data_editor(
         display.drop(columns=["tx_id"]),
@@ -687,99 +703,45 @@ def render_settings():
 
 
 # ── Scroll-position preservation for data editors ────────────────────────────
-# Injected into parent.document.head so the code runs in the same JS realm as
-# AG Grid — cross-realm Object.defineProperty on DOM nodes doesn't work.
+# requestAnimationFrame loop running in the parent window: on every frame for
+# 2 s after a mousedown on the grid, if scrollTop jumped to near-zero we
+# set it back. Catches all reset mechanisms without cross-realm tricks.
 
-_SCROLL_FIX_JS = """
+components.html("""
+<script>
 (function () {
-    var saved = 0, guard = false, tid = null;
+    if (parent.window._agScrollFixInit) return;
+    parent.window._agScrollFixInit = true;
 
-    function findDesc(el) {
-        var p = Object.getPrototypeOf(el);
-        while (p) {
-            var d = Object.getOwnPropertyDescriptor(p, 'scrollTop');
-            if (d && d.set) return d;
-            p = Object.getPrototypeOf(p);
-        }
-        return null;
+    var saved    = 0;
+    var deadline = 0;
+    var rafId    = null;
+
+    function getVP() {
+        return parent.document.querySelector('.ag-body-viewport');
     }
 
-    function patch(vp) {
-        if (vp._agFix) return;
-        vp._agFix = true;
-        var nd = findDesc(vp);
-        if (!nd) return;
-        Object.defineProperty(vp, 'scrollTop', {
-            configurable: true,
-            get: function () { return nd.get.call(this); },
-            set: function (v) {
-                nd.set.call(this, (guard && v < 10 && saved > 30) ? saved : v);
-            }
-        });
-        var origScrollTo = vp.scrollTo;
-        vp.scrollTo = function (x, y) {
-            var top = (x && typeof x === 'object') ? x.top : y;
-            if (guard && typeof top === 'number' && top < 10 && saved > 30) {
-                origScrollTo.call(this, { top: saved, behavior: 'instant' });
-            } else {
-                origScrollTo.apply(this, arguments);
-            }
-        };
+    function loop() {
+        if (Date.now() > deadline) { rafId = null; return; }
+        var vp = getVP();
+        if (vp && vp.scrollTop < 30 && saved > 30) {
+            vp.scrollTop = saved;
+        }
+        rafId = parent.requestAnimationFrame(loop);
     }
 
-    // Each Streamlit rerun may replace the viewport DOM node entirely.
-    // Watch for newly added viewports and patch them immediately so the
-    // setter intercept is in place before AG Grid resets scrollTop.
-    new MutationObserver(function (muts) {
-        for (var i = 0; i < muts.length; i++) {
-            var nodes = muts[i].addedNodes;
-            for (var j = 0; j < nodes.length; j++) {
-                var n = nodes[j];
-                if (n.nodeType !== 1) continue;
-                var vps = n.classList && n.classList.contains('ag-body-viewport')
-                    ? [n]
-                    : Array.from(n.querySelectorAll ? n.querySelectorAll('.ag-body-viewport') : []);
-                for (var k = 0; k < vps.length; k++) {
-                    patch(vps[k]);
-                    // Also do a RAF-based restore in case the element was
-                    // added at scrollTop=0 without any setter call to intercept.
-                    if (guard && saved > 30) {
-                        (function (vp) {
-                            requestAnimationFrame(function () {
-                                if (guard && saved > 30) vp.scrollTop = saved;
-                            });
-                        })(vps[k]);
-                    }
-                }
-            }
-        }
-    }).observe(document, { childList: true, subtree: true });
-
-    document.addEventListener('mousedown', function (e) {
+    parent.document.addEventListener('mousedown', function (e) {
         if (!e.target.closest) return;
-        var root = e.target.closest('.ag-root-wrapper');
-        if (!root) return;
-        var vp = root.querySelector('.ag-body-viewport');
-        if (!vp) return;
-        saved = vp.scrollTop;
-        patch(vp);
-        guard = true;
-        clearTimeout(tid);
-        tid = setTimeout(function () { guard = false; }, 3000);
+        if (!e.target.closest('.ag-root-wrapper')) return;
+        var vp = getVP();
+        if (!vp || vp.scrollTop <= 30) return;
+        saved    = vp.scrollTop;
+        deadline = Date.now() + 2000;
+        if (!rafId) rafId = parent.requestAnimationFrame(loop);
     }, true);
 })();
-"""
-
-components.html(
-    "<script>(function(){"
-    "if(parent.window._agScrollFixInit)return;"
-    "parent.window._agScrollFixInit=true;"
-    "var s=parent.document.createElement('script');"
-    f"s.textContent={json.dumps(_SCROLL_FIX_JS)};"
-    "parent.document.head.appendChild(s);"
-    "})();</script>",
-    height=0,
-)
+</script>
+""", height=0)
 
 # ── Layout ────────────────────────────────────────────────────────────────────
 
