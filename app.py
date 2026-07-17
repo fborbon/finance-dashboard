@@ -6,6 +6,7 @@ from pathlib import Path
 import pandas as pd
 import plotly.express as px
 import streamlit as st
+import streamlit.components.v1 as components
 from data_loader import load_all
 from predictor import predict_next_month
 
@@ -202,7 +203,6 @@ def t(key: str, **kwargs) -> str:
 
 
 PREFIX_LEN = 20  # characters used to match "same kind" concepts
-PAGE_SIZE  = 15  # rows per page — sized so the table fits without internal scroll
 
 def _concept_prefix(concept: str) -> str:
     return str(concept).strip().lower()[:PREFIX_LEN]
@@ -375,22 +375,9 @@ def render_movements(bank_df: pd.DataFrame, bank: str):
         value=True,
     )
 
-    display_all = bank_df[["date", "concept", "amount", "balance", "category", "tx_id"]].copy()
-    display_all["date"] = display_all["date"].dt.strftime("%Y-%m-%d")
-    display_all = display_all.reset_index(drop=True)
-
-    # Pagination — keeps the table short enough to need no internal scroll,
-    # so there is no scroll position to lose across reruns.
-    n_rows  = len(display_all)
-    n_pages = max(1, (n_rows + PAGE_SIZE - 1) // PAGE_SIZE)
-    _pk     = f"_pg_{bank}"
-    if _pk not in st.session_state:
-        st.session_state[_pk] = 0
-    page = max(0, min(int(st.session_state[_pk]), n_pages - 1))
-    st.session_state[_pk] = page
-    start   = page * PAGE_SIZE
-    end     = min(start + PAGE_SIZE, n_rows)
-    display = display_all.iloc[start:end].copy().reset_index(drop=True)
+    display = bank_df[["date", "concept", "amount", "balance", "category", "tx_id"]].copy()
+    display["date"] = display["date"].dt.strftime("%Y-%m-%d")
+    display = display.reset_index(drop=True)
 
     edited = st.data_editor(
         display.drop(columns=["tx_id"]),
@@ -405,24 +392,9 @@ def render_movements(bank_df: pd.DataFrame, bank: str):
         },
         hide_index=True,
         use_container_width=True,
-        height=PAGE_SIZE * 36 + 52,
+        height=560,
         key=f"editor_{bank}",
     )
-
-    # Pagination controls
-    cp, ci, cn = st.columns([1, 5, 1])
-    with cp:
-        if st.button("◀", key=f"pgp_{bank}", disabled=(page == 0), use_container_width=True):
-            st.session_state[_pk] = page - 1
-            st.session_state.pop(f"editor_{bank}", None)
-            st.rerun()
-    with ci:
-        st.caption(f"  {start + 1} – {end} / {n_rows}")
-    with cn:
-        if st.button("▶", key=f"pgn_{bank}", disabled=(page == n_pages - 1), use_container_width=True):
-            st.session_state[_pk] = page + 1
-            st.session_state.pop(f"editor_{bank}", None)
-            st.rerun()
 
     # NaN-safe comparison (both sides filled so NaN==NaN doesn't create spurious changes)
     changed      = edited["category"].fillna("") != display["category"].fillna("")
@@ -709,6 +681,63 @@ def render_settings():
     st.subheader(t("session_header"))
     st.link_button(t("logout_btn"), url="/logout", type="secondary")
 
+
+# ── Scroll-position preservation for data editors ────────────────────────────
+# Saves the AG Grid viewport scroll on any cell click and restores it after the
+# Streamlit rerun that follows a category change.
+
+components.html("""
+<script>
+(function () {
+    if (parent.window._agScrollGuardInit) return;
+    parent.window._agScrollGuardInit = true;
+
+    var saved   = null;   // { vp, top }
+    var watchId = null;
+    var mutTid  = null;
+
+    // Capture scroll position on any cell interaction
+    parent.document.addEventListener('mousedown', function (e) {
+        if (!e.target.closest) return;
+        var root = e.target.closest('.ag-root-wrapper');
+        if (!root) return;
+        var vp = root.querySelector('.ag-body-viewport');
+        if (vp) saved = { vp: vp, top: vp.scrollTop };
+    }, true);
+
+    function startWatchdog() {
+        clearInterval(watchId);
+        var s = saved;
+        if (!s || s.top < 5) return;          // already at top, nothing to do
+        var t0 = Date.now(), ticks = 0;
+        watchId = setInterval(function () {
+            ticks++;
+            var elapsed = Date.now() - t0;
+            if (!saved || ticks > 80 || elapsed > 4000) {
+                clearInterval(watchId); watchId = null; return;
+            }
+            var cur = s.vp.scrollTop;
+            if (cur < 5 && s.top > 30 && elapsed < 2000) {
+                // Scroll jumped to top within 2 s of a rerun → restore
+                s.vp.scrollTop = s.top;
+            } else if (Math.abs(cur - s.top) > 30) {
+                // User intentionally scrolled → accept new position and stop
+                saved = null;
+                clearInterval(watchId); watchId = null;
+            }
+        }, 50);
+    }
+
+    // Trigger watchdog after significant DOM changes (Streamlit rerun)
+    new MutationObserver(function (muts) {
+        if (!saved) return;
+        var n = 0;
+        for (var i = 0; i < muts.length; i++) n += muts[i].addedNodes.length;
+        if (n > 3) { clearTimeout(mutTid); mutTid = setTimeout(startWatchdog, 150); }
+    }).observe(parent.document.body, { childList: true, subtree: true });
+})();
+</script>
+""", height=0)
 
 # ── Layout ────────────────────────────────────────────────────────────────────
 
