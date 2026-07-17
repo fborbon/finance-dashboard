@@ -130,6 +130,11 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "add_cat_btn_ok": "Añadir",
         "cancel_btn": "Cancelar",
         "new_cat_added": "Categoría '{name}' añadida.",
+        # bulk row assignment
+        "bulk_apply_btn":   "Aplicar",
+        "rows_selected":    "{n} fila(s) seleccionadas",
+        "select_rows_hint": "☑ Selecciona filas para aplicar",
+        "bulk_applied":     "'{cat}' aplicado a {n} fila(s)",
     },
     "en": {
         "page_title": "💳 Bank Dashboard",
@@ -196,6 +201,11 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "add_cat_btn_ok": "Add",
         "cancel_btn": "Cancel",
         "new_cat_added": "Category '{name}' added.",
+        # bulk row assignment
+        "bulk_apply_btn":   "Apply",
+        "rows_selected":    "{n} row(s) selected",
+        "select_rows_hint": "☑ Select rows to apply",
+        "bulk_applied":     "'{cat}' applied to {n} row(s)",
     },
 }
 
@@ -385,9 +395,11 @@ def render_movements(bank_df: pd.DataFrame, bank: str):
 
     _fmt2 = JsCode("function(p){return p.value==null?'':Number(p.value).toFixed(2);}")
 
-    gb = GridOptionsBuilder.from_dataframe(display.drop(columns=["tx_id"]))
+    gb = GridOptionsBuilder.from_dataframe(display)
     gb.configure_default_column(floatingFilter=True, filter=True, sortable=True, resizable=True)
-    gb.configure_column("date",    headerName=t("col_date"),    editable=False, width=110, filter="agDateColumnFilter")
+    gb.configure_column("tx_id",   hide=True)
+    gb.configure_column("date",    headerName=t("col_date"),    editable=False, width=130,
+                        headerCheckboxSelection=True, filter="agDateColumnFilter")
     gb.configure_column("concept", headerName=t("col_concept"), editable=False, flex=2,   filter="agTextColumnFilter")
     gb.configure_column("amount",  headerName=t("col_amount"),  editable=False, width=130,
                         type=["numericColumn", "rightAligned"], valueFormatter=_fmt2, filter="agNumberColumnFilter")
@@ -399,18 +411,47 @@ def render_movements(bank_df: pd.DataFrame, bank: str):
         cellEditorParams={"values": cats + [SENTINEL]},
         filter="agTextColumnFilter",
     )
+    gb.configure_selection("multiple", use_checkbox=True)
     gb.configure_grid_options(suppressScrollOnNewData=True, enableCellTextSelection=True)
 
     resp = AgGrid(
-        display.drop(columns=["tx_id"]),
+        display,
         gridOptions=gb.build(),
         height=600,
-        update_mode=GridUpdateMode.VALUE_CHANGED,
+        update_mode=GridUpdateMode.VALUE_CHANGED | GridUpdateMode.SELECTION_CHANGED,
         data_return_mode=DataReturnMode.AS_INPUT,
         allow_unsafe_jscode=True,
         theme="streamlit",
         key=f"aggrid_{bank}",
     )
+
+    # ── Bulk assignment ───────────────────────────────────────────────────────
+    _sel = pd.DataFrame(resp["selected_rows"]) if resp["selected_rows"] else pd.DataFrame()
+    _n   = len(_sel)
+    _bc1, _bc2, _bc3 = st.columns([3, 4, 2])
+    with _bc1:
+        st.caption(f"**{_n}** {t('rows_selected')}" if _n else t("select_rows_hint"))
+    with _bc2:
+        _bcat = st.selectbox("", cats, key=f"bulk_cat_{bank}",
+                             label_visibility="collapsed", disabled=(_n == 0))
+    with _bc3:
+        if st.button(t("bulk_apply_btn"), key=f"bulk_apply_{bank}",
+                     type="primary", disabled=(_n == 0), use_container_width=True):
+            _bulk_total = 0
+            for _, _sr in _sel.iterrows():
+                st.session_state.overrides[_sr["tx_id"]] = _bcat
+                if apply_all:
+                    _pfx = _concept_prefix(_sr["concept"])
+                    if _pfx:
+                        _ms = df[df["concept"].str.strip().str.lower().str.startswith(_pfx)]
+                        for _, _mr in _ms.iterrows():
+                            st.session_state.overrides[_mr["tx_id"]] = _bcat
+                        _bulk_total += len(_ms)
+            save_overrides(st.session_state.overrides)
+            st.toast(t("bulk_applied", cat=_bcat, n=_n), icon="✅")
+            if apply_all and _bulk_total > _n:
+                st.toast(t("apply_all_toast", n=_bulk_total), icon="✅")
+            st.rerun()
 
     edited = pd.DataFrame(resp["data"]).reset_index(drop=True)
     if "category" not in edited.columns or edited.empty:
