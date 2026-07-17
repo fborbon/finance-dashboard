@@ -6,7 +6,7 @@ from pathlib import Path
 import pandas as pd
 import plotly.express as px
 import streamlit as st
-import streamlit.components.v1 as components
+from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, DataReturnMode, JsCode
 from data_loader import load_all
 from predictor import predict_next_month
 
@@ -379,44 +379,43 @@ def render_movements(bank_df: pd.DataFrame, bank: str):
         value=True,
     )
 
-    # ── Column filters ────────────────────────────────────────────────────────
-    fc1, fc2, fc3 = st.columns([3, 2, 5])
-    with fc1:
-        f_concept = st.text_input("", placeholder=f"🔍 {t('col_concept')}",
-                                  key=f"f_concept_{bank}", label_visibility="collapsed")
-    with fc2:
-        f_cat = st.text_input("", placeholder=f"🔍 {t('col_category')}",
-                              key=f"f_cat_{bank}", label_visibility="collapsed")
-
     display = bank_df[["date", "concept", "amount", "balance", "category", "tx_id"]].copy()
     display["date"] = display["date"].dt.strftime("%Y-%m-%d")
     display = display.reset_index(drop=True)
 
-    if f_concept:
-        mask = display["concept"].str.lower().str.contains(f_concept.lower(), na=False)
-        display = display[mask].reset_index(drop=True)
-    if f_cat:
-        mask = display["category"].str.lower().str.contains(f_cat.lower(), na=False)
-        display = display[mask].reset_index(drop=True)
+    _fmt2 = JsCode("function(p){return p.value==null?'':Number(p.value).toFixed(2);}")
 
-    edited = st.data_editor(
+    gb = GridOptionsBuilder.from_dataframe(display.drop(columns=["tx_id"]))
+    gb.configure_default_column(floatingFilter=True, filter=True, sortable=True, resizable=True)
+    gb.configure_column("date",    headerName=t("col_date"),    editable=False, width=110, filter="agDateColumnFilter")
+    gb.configure_column("concept", headerName=t("col_concept"), editable=False, flex=2,   filter="agTextColumnFilter")
+    gb.configure_column("amount",  headerName=t("col_amount"),  editable=False, width=130,
+                        type=["numericColumn", "rightAligned"], valueFormatter=_fmt2, filter="agNumberColumnFilter")
+    gb.configure_column("balance", headerName=t("col_balance"), editable=False, width=130,
+                        type=["numericColumn", "rightAligned"], valueFormatter=_fmt2, filter="agNumberColumnFilter")
+    gb.configure_column("category",
+        headerName=t("col_category"), editable=True, width=175,
+        cellEditor="agSelectCellEditor",
+        cellEditorParams={"values": cats + [SENTINEL]},
+        filter="agTextColumnFilter",
+    )
+    gb.configure_grid_options(suppressScrollOnNewData=True, enableCellTextSelection=True)
+
+    resp = AgGrid(
         display.drop(columns=["tx_id"]),
-        column_config={
-            "date":     st.column_config.TextColumn(t("col_date"),     disabled=True, width="small"),
-            "concept":  st.column_config.TextColumn(t("col_concept"),  disabled=True, width="large"),
-            "amount":   st.column_config.NumberColumn(t("col_amount"), disabled=True, format="%.2f", width="small"),
-            "balance":  st.column_config.NumberColumn(t("col_balance"),disabled=True, format="%.2f", width="small"),
-            "category": st.column_config.SelectboxColumn(
-                t("col_category"), options=cats + [SENTINEL], required=True, width="medium"
-            ),
-        },
-        hide_index=True,
-        use_container_width=True,
-        height=560,
-        key=f"editor_{bank}",
+        gridOptions=gb.build(),
+        height=600,
+        update_mode=GridUpdateMode.VALUE_CHANGED,
+        data_return_mode=DataReturnMode.AS_INPUT,
+        allow_unsafe_jscode=True,
+        theme="streamlit",
+        key=f"aggrid_{bank}",
     )
 
-    # NaN-safe comparison (both sides filled so NaN==NaN doesn't create spurious changes)
+    edited = pd.DataFrame(resp["data"]).reset_index(drop=True)
+    if "category" not in edited.columns or edited.empty:
+        return
+
     changed      = edited["category"].fillna("") != display["category"].fillna("")
     sentinel_sel = changed & (edited["category"] == SENTINEL)
     real_changes = changed & ~sentinel_sel
@@ -703,46 +702,6 @@ def render_settings():
 
 
 # ── Scroll-position preservation for data editors ────────────────────────────
-# requestAnimationFrame loop running in the parent window: on every frame for
-# 2 s after a mousedown on the grid, if scrollTop jumped to near-zero we
-# set it back. Catches all reset mechanisms without cross-realm tricks.
-
-components.html("""
-<script>
-(function () {
-    if (parent.window._agScrollFixInit) return;
-    parent.window._agScrollFixInit = true;
-
-    var saved    = 0;
-    var deadline = 0;
-    var rafId    = null;
-
-    function getVP() {
-        return parent.document.querySelector('.ag-body-viewport');
-    }
-
-    function loop() {
-        if (Date.now() > deadline) { rafId = null; return; }
-        var vp = getVP();
-        if (vp && vp.scrollTop < 30 && saved > 30) {
-            vp.scrollTop = saved;
-        }
-        rafId = parent.requestAnimationFrame(loop);
-    }
-
-    parent.document.addEventListener('mousedown', function (e) {
-        if (!e.target.closest) return;
-        if (!e.target.closest('.ag-root-wrapper')) return;
-        var vp = getVP();
-        if (!vp || vp.scrollTop <= 30) return;
-        saved    = vp.scrollTop;
-        deadline = Date.now() + 2000;
-        if (!rafId) rafId = parent.requestAnimationFrame(loop);
-    }, true);
-})();
-</script>
-""", height=0)
-
 # ── Layout ────────────────────────────────────────────────────────────────────
 
 tab_labels = (
