@@ -6,7 +6,7 @@ from pathlib import Path
 import pandas as pd
 import plotly.express as px
 import streamlit as st
-from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, DataReturnMode, JsCode
+from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, DataReturnMode
 from data_loader import load_all
 from predictor import predict_next_month
 
@@ -390,10 +390,10 @@ def render_movements(bank_df: pd.DataFrame, bank: str):
     )
 
     display = bank_df[["date", "concept", "amount", "balance", "category", "tx_id"]].copy()
-    display["date"] = display["date"].dt.strftime("%Y-%m-%d")
+    display["date"]    = display["date"].dt.strftime("%Y-%m-%d")
+    display["amount"]  = display["amount"].round(2)
+    display["balance"] = display["balance"].round(2)
     display = display.reset_index(drop=True)
-
-    _fmt2 = JsCode("function(p){return p.value==null?'':Number(p.value).toFixed(2);}")
 
     gb = GridOptionsBuilder.from_dataframe(display)
     gb.configure_default_column(floatingFilter=True, filter=True, sortable=True, resizable=True)
@@ -402,9 +402,9 @@ def render_movements(bank_df: pd.DataFrame, bank: str):
                         headerCheckboxSelection=True, filter="agDateColumnFilter")
     gb.configure_column("concept", headerName=t("col_concept"), editable=False, flex=2,   filter="agTextColumnFilter")
     gb.configure_column("amount",  headerName=t("col_amount"),  editable=False, width=130,
-                        type=["numericColumn", "rightAligned"], valueFormatter=_fmt2, filter="agNumberColumnFilter")
+                        type=["numericColumn", "rightAligned"], filter="agNumberColumnFilter")
     gb.configure_column("balance", headerName=t("col_balance"), editable=False, width=130,
-                        type=["numericColumn", "rightAligned"], valueFormatter=_fmt2, filter="agNumberColumnFilter")
+                        type=["numericColumn", "rightAligned"], filter="agNumberColumnFilter")
     gb.configure_column("category",
         headerName=t("col_category"), editable=True, width=175,
         cellEditor="agSelectCellEditor",
@@ -420,8 +420,7 @@ def render_movements(bank_df: pd.DataFrame, bank: str):
         height=600,
         update_mode=GridUpdateMode.VALUE_CHANGED | GridUpdateMode.SELECTION_CHANGED,
         data_return_mode=DataReturnMode.AS_INPUT,
-        allow_unsafe_jscode=True,
-        theme="streamlit",
+        theme="alpine",
         key=f"aggrid_{bank}",
     )
 
@@ -476,6 +475,7 @@ def render_movements(bank_df: pd.DataFrame, bank: str):
         save_overrides(st.session_state.overrides)
         if apply_all and total_matched > 0:
             st.toast(t("apply_all_toast", n=total_matched), icon="✅")
+        st.rerun()
 
     # Sentinel selected → open popup dialog to name the new category
     if sentinel_sel.any():
