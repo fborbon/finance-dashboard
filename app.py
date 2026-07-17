@@ -131,10 +131,11 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "cancel_btn": "Cancelar",
         "new_cat_added": "Categoría '{name}' añadida.",
         # bulk row assignment
-        "bulk_apply_btn":   "Aplicar",
+        "bulk_apply_btn":   "Aplicar selección",
         "rows_selected":    "{n} fila(s) seleccionadas",
-        "select_rows_hint": "☑ Selecciona filas para aplicar",
+        "select_rows_hint": "☑ Selecciona filas · elige categoría · Aplicar o Guardar",
         "bulk_applied":     "'{cat}' aplicado a {n} fila(s)",
+        "save_btn":         "Guardar",
     },
     "en": {
         "page_title": "💳 Bank Dashboard",
@@ -202,10 +203,11 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "cancel_btn": "Cancel",
         "new_cat_added": "Category '{name}' added.",
         # bulk row assignment
-        "bulk_apply_btn":   "Apply",
+        "bulk_apply_btn":   "Apply selection",
         "rows_selected":    "{n} row(s) selected",
-        "select_rows_hint": "☑ Select rows to apply",
+        "select_rows_hint": "☑ Select rows · pick category · Apply or Save",
         "bulk_applied":     "'{cat}' applied to {n} row(s)",
+        "save_btn":         "Save",
     },
 }
 
@@ -420,14 +422,14 @@ def render_movements(bank_df: pd.DataFrame, bank: str):
         display,
         gridOptions=gb.build(),
         height=600,
-        update_mode=GridUpdateMode.VALUE_CHANGED | GridUpdateMode.SELECTION_CHANGED,
+        update_mode=GridUpdateMode.MANUAL,
         data_return_mode=DataReturnMode.AS_INPUT,
         theme="alpine",
         key=_grid_key,
         reload_data=False,
     )
 
-    # ── Bulk assignment ───────────────────────────────────────────────────────
+    # ── Actions bar (no reruns until the user explicitly clicks) ─────────────
     _raw_sel = resp["selected_rows"]
     if isinstance(_raw_sel, pd.DataFrame):
         _sel = _raw_sel.reset_index(drop=True)
@@ -435,74 +437,84 @@ def render_movements(bank_df: pd.DataFrame, bank: str):
         _sel = pd.DataFrame(_raw_sel).reset_index(drop=True)
     else:
         _sel = pd.DataFrame()
-    _n   = len(_sel)
-    _bc1, _bc2, _bc3 = st.columns([3, 4, 2])
-    with _bc1:
-        st.caption(f"**{_n}** {t('rows_selected')}" if _n else t("select_rows_hint"))
-    with _bc2:
-        _bcat = st.selectbox("", cats, key=f"bulk_cat_{bank}",
-                             label_visibility="collapsed", disabled=(_n == 0))
-    with _bc3:
-        if st.button(t("bulk_apply_btn"), key=f"bulk_apply_{bank}",
-                     type="primary", disabled=(_n == 0), use_container_width=True):
-            _bulk_total = 0
-            for _, _sr in _sel.iterrows():
-                st.session_state.overrides[_sr["tx_id"]] = _bcat
+
+    _ab1, _ab2, _ab3, _ab4 = st.columns([3, 3, 1.8, 1.5])
+    with _ab1:
+        st.caption(t("select_rows_hint"))
+    with _ab2:
+        _bcat = st.selectbox("", cats, key=f"bulk_cat_{bank}", label_visibility="collapsed")
+    with _ab3:
+        _do_bulk = st.button(t("bulk_apply_btn"), key=f"bulk_apply_{bank}", use_container_width=True)
+    with _ab4:
+        _do_save = st.button("💾 " + t("save_btn"), key=f"save_{bank}",
+                             type="primary", use_container_width=True)
+
+    # ── Process only when the user explicitly clicked Save or Apply ───────────
+    _opened_dialog = False
+
+    if _do_save or _do_bulk:
+        edited = pd.DataFrame(resp["data"]).reset_index(drop=True)
+
+        if "category" in edited.columns and not edited.empty:
+            changed      = edited["category"].fillna("") != display["category"].fillna("")
+            sentinel_sel = changed & (edited["category"] == SENTINEL)
+            real_changes = changed & ~sentinel_sel
+
+            # Save individual cell edits
+            total_matched = 0
+            for idx in display.index[real_changes]:
+                new_cat = edited.loc[idx, "category"]
+                st.session_state.overrides[display.loc[idx, "tx_id"]] = new_cat
                 if apply_all:
-                    _pfx = _concept_prefix(_sr["concept"])
-                    if _pfx:
-                        _ms = df[df["concept"].str.strip().str.lower().str.startswith(_pfx)]
-                        for _, _mr in _ms.iterrows():
-                            st.session_state.overrides[_mr["tx_id"]] = _bcat
-                        _bulk_total += len(_ms)
-            save_overrides(st.session_state.overrides)
-            st.toast(t("bulk_applied", cat=_bcat, n=_n), icon="✅")
-            if apply_all and _bulk_total > _n:
-                st.toast(t("apply_all_toast", n=_bulk_total), icon="✅")
-            st.session_state[f"_gen_{bank}"] = st.session_state.get(f"_gen_{bank}", 0) + 1
-            st.rerun()
+                    prefix = _concept_prefix(display.loc[idx, "concept"])
+                    if prefix:
+                        matches = df[df["concept"].str.strip().str.lower().str.startswith(prefix)]
+                        for _, mrow in matches.iterrows():
+                            st.session_state.overrides[mrow["tx_id"]] = new_cat
+                        total_matched += len(matches)
 
-    edited = pd.DataFrame(resp["data"]).reset_index(drop=True)
-    if "category" not in edited.columns or edited.empty:
-        return
+            # Bulk apply to selected rows
+            _bulk_total = 0
+            if _do_bulk and not _sel.empty:
+                for _, _sr in _sel.iterrows():
+                    st.session_state.overrides[_sr["tx_id"]] = _bcat
+                    if apply_all:
+                        _pfx = _concept_prefix(_sr["concept"])
+                        if _pfx:
+                            _ms = df[df["concept"].str.strip().str.lower().str.startswith(_pfx)]
+                            for _, _mr in _ms.iterrows():
+                                st.session_state.overrides[_mr["tx_id"]] = _bcat
+                            _bulk_total += len(_ms)
 
-    changed      = edited["category"].fillna("") != display["category"].fillna("")
-    sentinel_sel = changed & (edited["category"] == SENTINEL)
-    real_changes = changed & ~sentinel_sel
+            _any_saved = real_changes.any() or (_do_bulk and not _sel.empty)
+            if _any_saved:
+                save_overrides(st.session_state.overrides)
+                if apply_all and total_matched > 0:
+                    st.toast(t("apply_all_toast", n=total_matched), icon="✅")
+                if _do_bulk and not _sel.empty:
+                    st.toast(t("bulk_applied", cat=_bcat, n=len(_sel)), icon="✅")
+                    if apply_all and _bulk_total > len(_sel):
+                        st.toast(t("apply_all_toast", n=_bulk_total), icon="✅")
+                st.session_state[f"_gen_{bank}"] = st.session_state.get(f"_gen_{bank}", 0) + 1
+                st.rerun()
 
-    if real_changes.any():
-        total_matched = 0
-        for idx in display.index[real_changes]:
-            new_cat = edited.loc[idx, "category"]
-            st.session_state.overrides[display.loc[idx, "tx_id"]] = new_cat
-            if apply_all:
-                prefix = _concept_prefix(display.loc[idx, "concept"])
-                if prefix:
-                    matches = df[df["concept"].str.strip().str.lower().str.startswith(prefix)]
-                    for _, mrow in matches.iterrows():
-                        st.session_state.overrides[mrow["tx_id"]] = new_cat
-                    total_matched += len(matches)
-        save_overrides(st.session_state.overrides)
-        if apply_all and total_matched > 0:
-            st.toast(t("apply_all_toast", n=total_matched), icon="✅")
-        st.session_state[f"_gen_{bank}"] = st.session_state.get(f"_gen_{bank}", 0) + 1
-        st.rerun()
+            # Sentinel → open new-category dialog
+            if sentinel_sel.any():
+                _opened_dialog = True
+                st.session_state[f"_pending_new_cat_{bank}"] = [
+                    display.loc[idx, "tx_id"] for idx in display.index[sentinel_sel]
+                ]
+                st.session_state[f"_pending_concepts_{bank}"] = [
+                    display.loc[idx, "concept"] for idx in display.index[sentinel_sel]
+                ]
+                st.session_state[f"_pending_apply_all_{bank}"] = apply_all
+                st.session_state["_dialog_bank"] = bank
+                if st.session_state.get("lang", "es") == "es":
+                    _new_cat_dialog_es()
+                else:
+                    _new_cat_dialog_en()
 
-    # Sentinel selected → open popup dialog to name the new category
-    if sentinel_sel.any():
-        st.session_state[f"_pending_new_cat_{bank}"] = [
-            display.loc[idx, "tx_id"] for idx in display.index[sentinel_sel]
-        ]
-        st.session_state[f"_pending_concepts_{bank}"] = [
-            display.loc[idx, "concept"] for idx in display.index[sentinel_sel]
-        ]
-        st.session_state[f"_pending_apply_all_{bank}"] = apply_all
-        st.session_state["_dialog_bank"] = bank
-        if st.session_state.get("lang", "es") == "es":
-            _new_cat_dialog_es()
-        else:
-            _new_cat_dialog_en()
-    elif st.session_state.get(f"_pending_new_cat_{bank}"):
+    if not _opened_dialog and st.session_state.get(f"_pending_new_cat_{bank}"):
         st.session_state.pop(f"_pending_new_cat_{bank}", None)
 
 
