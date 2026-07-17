@@ -8,7 +8,7 @@ import plotly.express as px
 import streamlit as st
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, DataReturnMode, JsCode
 from data_loader import load_all
-from predictor import predict_next_month
+
 
 st.set_page_config(page_title="Panel Bancario", layout="wide", page_icon="💳")
 
@@ -87,12 +87,10 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "expenses_by_cat": "Gastos por categoría",
         "no_expenses": "Sin gastos en este período.",
         "monthly_cash_flow": "Flujo de caja mensual",
-        "next_month_preds": "Predicciones del próximo mes",
-        "pred_caption": "Totales estimados para **{month}** · tendencia lineal sobre los últimos 24 meses · se excluyen categorías con menos de 2 meses de datos",
-        "pred_income": "**Ingresos previstos por categoría**",
-        "pred_expenses": "**Gastos previstos por categoría**",
-        "no_income_history": "Historial insuficiente para predicciones de ingresos.",
-        "no_expense_history": "Historial insuficiente para predicciones de gastos.",
+        "hist_totals":   "Acumulado histórico por categoría",
+        "hist_income":   "**Ingresos totales por categoría**",
+        "hist_expenses": "**Gastos totales por categoría**",
+        "no_income_data": "Sin ingresos en este período.",
         # upload
         "upload_not_configured": "La carga de archivos no está configurada para este banco.",
         "current_files": "**Archivos actuales en disco:**",
@@ -164,12 +162,10 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "expenses_by_cat": "Expenses by category",
         "no_expenses": "No expenses in this period.",
         "monthly_cash_flow": "Monthly cash flow",
-        "next_month_preds": "Next month predictions",
-        "pred_caption": "Estimated totals for **{month}** · linear trend over last 24 months · categories with < 2 months of data excluded",
-        "pred_income": "**Predicted income by category**",
-        "pred_expenses": "**Predicted expenses by category**",
-        "no_income_history": "Not enough history for income predictions.",
-        "no_expense_history": "Not enough history for expense predictions.",
+        "hist_totals":   "Cumulative totals by category",
+        "hist_income":   "**Total income by category**",
+        "hist_expenses": "**Total expenses by category**",
+        "no_income_data": "No income in this period.",
         "upload_not_configured": "File upload not configured for this bank.",
         "current_files": "**Current files on disk:**",
         "no_files": "No data files found yet.",
@@ -223,12 +219,6 @@ PREFIX_LEN = 20  # characters used to match "same kind" concepts
 def _concept_prefix(concept: str) -> str:
     return str(concept).strip().lower()[:PREFIX_LEN]
 
-
-def _next_month_label(lang: str) -> str:
-    ts = (pd.Timestamp.now().to_period("M") + 1).to_timestamp()
-    if lang == "es":
-        return f"{_MONTHS_ES[ts.month - 1].capitalize()} {ts.year}"
-    return ts.strftime("%B %Y")
 
 
 # ── Persistence helpers ───────────────────────────────────────────────────────
@@ -593,46 +583,49 @@ def render_charts(bank_df: pd.DataFrame, bank: str):
     st.plotly_chart(fig3, use_container_width=True)
 
     st.divider()
-    st.subheader(t("next_month_preds"))
-
-    preds = predict_next_month(df[df["bank"] == bank])
-    next_month = _next_month_label(st.session_state.lang)
-    st.caption(t("pred_caption", month=next_month))
+    st.subheader(t("hist_totals"))
 
     col_pl, col_pr = st.columns(2)
+
     with col_pl:
-        st.markdown(t("pred_income"))
-        if preds["income"]:
+        st.markdown(t("hist_income"))
+        inc = bank_df[bank_df["amount"] > 0]
+        if inc.empty:
+            st.info(t("no_income_data"))
+        else:
             inc_df = (
-                pd.DataFrame(preds["income"].items(), columns=["category", "amount"])
+                inc.groupby("category")["amount"].sum()
+                .reset_index()
                 .sort_values("amount", ascending=True)
             )
+            _hi = max(350, len(inc_df) * 35 + 60)
             fig_pi = px.bar(
                 inc_df, x="amount", y="category", orientation="h",
                 color_discrete_sequence=["#2ca02c"],
                 labels={"amount": "€", "category": ""},
             )
-            fig_pi.update_layout(margin={"l": 0, "r": 0, "t": 10, "b": 0})
+            fig_pi.update_layout(height=_hi, margin={"l": 0, "r": 10, "t": 10, "b": 0})
             st.plotly_chart(fig_pi, use_container_width=True)
-        else:
-            st.info(t("no_income_history"))
 
     with col_pr:
-        st.markdown(t("pred_expenses"))
-        if preds["expenses"]:
+        st.markdown(t("hist_expenses"))
+        exp_h = bank_df[bank_df["amount"] < 0]
+        if exp_h.empty:
+            st.info(t("no_expenses"))
+        else:
             exp_df = (
-                pd.DataFrame(preds["expenses"].items(), columns=["category", "amount"])
+                exp_h.groupby("category")["amount"].sum().abs()
+                .reset_index()
                 .sort_values("amount", ascending=True)
             )
+            _he = max(350, len(exp_df) * 35 + 60)
             fig_pe = px.bar(
                 exp_df, x="amount", y="category", orientation="h",
                 color_discrete_sequence=["#d62728"],
                 labels={"amount": "€", "category": ""},
             )
-            fig_pe.update_layout(margin={"l": 0, "r": 0, "t": 10, "b": 0})
+            fig_pe.update_layout(height=_he, margin={"l": 0, "r": 10, "t": 10, "b": 0})
             st.plotly_chart(fig_pe, use_container_width=True)
-        else:
-            st.info(t("no_expense_history"))
 
 
 # ── Bank subtab: file upload ──────────────────────────────────────────────────
