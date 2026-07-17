@@ -18,6 +18,10 @@ st.markdown(
     "<style>"
     "#MainMenu{display:none}"
     "[data-testid='stToolbar']{display:none}"
+    ".ag-body-viewport::-webkit-scrollbar{width:10px}"
+    ".ag-body-viewport::-webkit-scrollbar-track{background:transparent}"
+    ".ag-body-viewport::-webkit-scrollbar-thumb{background:#888;border-radius:5px}"
+    ".ag-body-viewport::-webkit-scrollbar-thumb:hover{background:#555}"
     "</style>",
     unsafe_allow_html=True,
 )
@@ -683,74 +687,81 @@ def render_settings():
 
 
 # ── Scroll-position preservation for data editors ────────────────────────────
-# Saves the AG Grid viewport scroll on any cell click and restores it after the
-# Streamlit rerun that follows a category change.
+# Injected into parent.document.head so the code runs in the same JS realm as
+# AG Grid — cross-realm Object.defineProperty on DOM nodes doesn't work.
 
-components.html("""
-<script>
+_SCROLL_FIX_JS = """
 (function () {
-    if (parent.window._agScrollFixInit) return;
-    parent.window._agScrollFixInit = true;
+    var saved = 0, guard = false, tid = null;
 
-    var saved    = 0;
-    var guard    = false;
-    var guardTid = null;
-
-    // Walk the prototype chain to find the native scrollTop descriptor.
-    // We need the original getter/setter so we can call them after patching.
-    function nativeScrollTopDesc(el) {
-        var proto = Object.getPrototypeOf(el);
-        while (proto) {
-            var d = Object.getOwnPropertyDescriptor(proto, 'scrollTop');
+    function findDesc(el) {
+        var p = Object.getPrototypeOf(el);
+        while (p) {
+            var d = Object.getOwnPropertyDescriptor(p, 'scrollTop');
             if (d && d.set) return d;
-            proto = Object.getPrototypeOf(proto);
+            p = Object.getPrototypeOf(p);
         }
         return null;
     }
 
-    function attach(vp) {
-        if (vp._sfPatched) return;
-        vp._sfPatched = true;
-
-        var nd = nativeScrollTopDesc(vp);
+    function patch(vp) {
+        if (vp._agFix) return;
+        vp._agFix = true;
+        var nd = findDesc(vp);
         if (!nd) return;
 
-        // Shadow the prototype's scrollTop with our own instance property.
-        // Every write goes through our setter; when the guard is armed and
-        // something tries to reset to 0, we redirect to the saved position.
         Object.defineProperty(vp, 'scrollTop', {
             configurable: true,
             get: function () { return nd.get.call(this); },
             set: function (v) {
                 if (guard && v < 10 && saved > 30) {
                     nd.set.call(this, saved);
-                    // Keep guard alive for another 300 ms in case AG Grid
-                    // makes a second reset call, then release it so the user
-                    // can freely scroll to the top afterwards.
-                    clearTimeout(guardTid);
-                    guardTid = setTimeout(function () { guard = false; }, 300);
+                    clearTimeout(tid);
+                    tid = setTimeout(function () { guard = false; }, 300);
                 } else {
                     nd.set.call(this, v);
                 }
             }
         });
+
+        var origScrollTo = vp.scrollTo;
+        vp.scrollTo = function (x, y) {
+            var top = (x && typeof x === 'object') ? x.top : y;
+            if (guard && typeof top === 'number' && top < 10 && saved > 30) {
+                origScrollTo.call(this, { top: saved, behavior: 'instant' });
+                clearTimeout(tid);
+                tid = setTimeout(function () { guard = false; }, 300);
+            } else {
+                origScrollTo.apply(this, arguments);
+            }
+        };
     }
 
-    parent.document.addEventListener('mousedown', function (e) {
+    document.addEventListener('mousedown', function (e) {
         if (!e.target.closest) return;
         var root = e.target.closest('.ag-root-wrapper');
         if (!root) return;
         var vp = root.querySelector('.ag-body-viewport');
         if (!vp) return;
         saved = vp.scrollTop;
-        attach(vp);
+        patch(vp);
         guard = true;
-        clearTimeout(guardTid);
-        guardTid = setTimeout(function () { guard = false; }, 2000);
+        clearTimeout(tid);
+        tid = setTimeout(function () { guard = false; }, 2000);
     }, true);
 })();
-</script>
-""", height=0)
+"""
+
+components.html(
+    "<script>(function(){"
+    "if(parent.window._agScrollFixInit)return;"
+    "parent.window._agScrollFixInit=true;"
+    "var s=parent.document.createElement('script');"
+    f"s.textContent={json.dumps(_SCROLL_FIX_JS)};"
+    "parent.document.head.appendChild(s);"
+    "})();</script>",
+    height=0,
+)
 
 # ── Layout ────────────────────────────────────────────────────────────────────
 
