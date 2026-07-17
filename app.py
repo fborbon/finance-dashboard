@@ -689,52 +689,37 @@ def render_settings():
 components.html("""
 <script>
 (function () {
-    if (parent.window._agScrollGuardInit) return;
-    parent.window._agScrollGuardInit = true;
+    if (parent.window._agScrollFixInit) return;
+    parent.window._agScrollFixInit = true;
 
-    var saved   = null;   // { vp, top }
-    var watchId = null;
-    var mutTid  = null;
+    var saved    = 0;
+    var guard    = false;
+    var guardTid = null;
 
-    // Capture scroll position on any cell interaction
+    function attach(vp) {
+        if (vp._sfPatched) return;
+        vp._sfPatched = true;
+        var restoring = false;
+        vp.addEventListener('scroll', function () {
+            if (restoring || !guard || vp.scrollTop > 30 || saved <= 30) return;
+            restoring = true;
+            vp.scrollTop = saved;
+            restoring = false;
+        });
+    }
+
     parent.document.addEventListener('mousedown', function (e) {
         if (!e.target.closest) return;
         var root = e.target.closest('.ag-root-wrapper');
         if (!root) return;
         var vp = root.querySelector('.ag-body-viewport');
-        if (vp) saved = { vp: vp, top: vp.scrollTop };
+        if (!vp) return;
+        attach(vp);
+        saved = vp.scrollTop;
+        guard = true;
+        clearTimeout(guardTid);
+        guardTid = setTimeout(function () { guard = false; }, 3000);
     }, true);
-
-    function startWatchdog() {
-        clearInterval(watchId);
-        var s = saved;
-        if (!s || s.top < 5) return;          // already at top, nothing to do
-        var t0 = Date.now(), ticks = 0;
-        watchId = setInterval(function () {
-            ticks++;
-            var elapsed = Date.now() - t0;
-            if (!saved || ticks > 80 || elapsed > 4000) {
-                clearInterval(watchId); watchId = null; return;
-            }
-            var cur = s.vp.scrollTop;
-            if (cur < 5 && s.top > 30 && elapsed < 2000) {
-                // Scroll jumped to top within 2 s of a rerun → restore
-                s.vp.scrollTop = s.top;
-            } else if (Math.abs(cur - s.top) > 30) {
-                // User intentionally scrolled → accept new position and stop
-                saved = null;
-                clearInterval(watchId); watchId = null;
-            }
-        }, 50);
-    }
-
-    // Trigger watchdog after significant DOM changes (Streamlit rerun)
-    new MutationObserver(function (muts) {
-        if (!saved) return;
-        var n = 0;
-        for (var i = 0; i < muts.length; i++) n += muts[i].addedNodes.length;
-        if (n > 3) { clearTimeout(mutTid); mutTid = setTimeout(startWatchdog, 150); }
-    }).observe(parent.document.body, { childList: true, subtree: true });
 })();
 </script>
 """, height=0)
