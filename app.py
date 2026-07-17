@@ -363,6 +363,7 @@ def _new_cat_dialog_body():
         st.toast(t("new_cat_added", name=_name), icon="✅")
         if apply_all and total_matched > 0:
             st.toast(t("apply_all_toast", n=total_matched), icon="✅")
+        st.session_state[f"_gen_{bank}"] = st.session_state.get(f"_gen_{bank}", 0) + 1
         st.rerun()
 
 
@@ -414,6 +415,7 @@ def render_movements(bank_df: pd.DataFrame, bank: str):
     gb.configure_selection("multiple", use_checkbox=True)
     gb.configure_grid_options(suppressScrollOnNewData=True, enableCellTextSelection=True)
 
+    _grid_key = f"aggrid_{bank}_{st.session_state.get(f'_gen_{bank}', 0)}"
     resp = AgGrid(
         display,
         gridOptions=gb.build(),
@@ -421,7 +423,8 @@ def render_movements(bank_df: pd.DataFrame, bank: str):
         update_mode=GridUpdateMode.VALUE_CHANGED | GridUpdateMode.SELECTION_CHANGED,
         data_return_mode=DataReturnMode.AS_INPUT,
         theme="alpine",
-        key=f"aggrid_{bank}",
+        key=_grid_key,
+        reload_data=False,
     )
 
     # ── Bulk assignment ───────────────────────────────────────────────────────
@@ -450,6 +453,7 @@ def render_movements(bank_df: pd.DataFrame, bank: str):
             st.toast(t("bulk_applied", cat=_bcat, n=_n), icon="✅")
             if apply_all and _bulk_total > _n:
                 st.toast(t("apply_all_toast", n=_bulk_total), icon="✅")
+            st.session_state[f"_gen_{bank}"] = st.session_state.get(f"_gen_{bank}", 0) + 1
             st.rerun()
 
     edited = pd.DataFrame(resp["data"]).reset_index(drop=True)
@@ -475,6 +479,7 @@ def render_movements(bank_df: pd.DataFrame, bank: str):
         save_overrides(st.session_state.overrides)
         if apply_all and total_matched > 0:
             st.toast(t("apply_all_toast", n=total_matched), icon="✅")
+        st.session_state[f"_gen_{bank}"] = st.session_state.get(f"_gen_{bank}", 0) + 1
         st.rerun()
 
     # Sentinel selected → open popup dialog to name the new category
