@@ -6,7 +6,7 @@ from pathlib import Path
 import pandas as pd
 import plotly.express as px
 import streamlit as st
-from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, DataReturnMode
+from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, DataReturnMode, JsCode
 from data_loader import load_all
 from predictor import predict_next_month
 
@@ -398,6 +398,40 @@ def render_movements(bank_df: pd.DataFrame, bank: str):
     display["balance"] = display["balance"].round(2)
     display = display.reset_index(drop=True)
 
+    _delayed_select = JsCode("""
+class DelayedSelectEditor {
+    init(p) {
+        this.p = p;
+        this.committed = p.value;
+        this._t = null;
+        this.el = document.createElement('select');
+        this.el.style.cssText =
+            'width:100%;height:100%;min-height:28px;font-size:inherit;' +
+            'border:none;outline:none;cursor:pointer;';
+        (p.values || []).forEach(v => {
+            const o = document.createElement('option');
+            o.value = v; o.text = v;
+            if (v === this.committed) o.selected = true;
+            this.el.appendChild(o);
+        });
+        this.el.addEventListener('change', e => {
+            const chosen = e.target.value;
+            clearTimeout(this._t);
+            this.el.style.outline = '2px solid orange';
+            this._t = setTimeout(() => {
+                this.el.style.outline = '';
+                this.committed = chosen;
+                p.stopEditing();
+            }, 1000);
+        });
+    }
+    getGui()           { return this.el; }
+    getValue()         { return this.committed; }
+    destroy()          { clearTimeout(this._t); }
+    afterGuiAttached() { this.el.focus(); }
+}
+""")
+
     gb = GridOptionsBuilder.from_dataframe(display)
     gb.configure_default_column(floatingFilter=True, filter=True, sortable=True, resizable=True)
     gb.configure_column("tx_id",   hide=True)
@@ -410,7 +444,7 @@ def render_movements(bank_df: pd.DataFrame, bank: str):
                         type=["numericColumn", "rightAligned"], filter="agNumberColumnFilter")
     gb.configure_column("category",
         headerName=t("col_category"), editable=True, width=175,
-        cellEditor="agSelectCellEditor",
+        cellEditor=_delayed_select,
         cellEditorParams={"values": cats + [SENTINEL]},
         filter="agTextColumnFilter",
     )
@@ -427,6 +461,7 @@ def render_movements(bank_df: pd.DataFrame, bank: str):
         theme="alpine",
         key=_grid_key,
         reload_data=False,
+        allow_unsafe_jscode=True,
     )
 
     # ── Actions bar (no reruns until the user explicitly clicks) ─────────────
