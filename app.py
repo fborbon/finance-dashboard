@@ -709,7 +709,6 @@ _SCROLL_FIX_JS = """
         vp._agFix = true;
         var nd = findDesc(vp);
         if (!nd) return;
-
         Object.defineProperty(vp, 'scrollTop', {
             configurable: true,
             get: function () { return nd.get.call(this); },
@@ -723,7 +722,6 @@ _SCROLL_FIX_JS = """
                 }
             }
         });
-
         var origScrollTo = vp.scrollTo;
         vp.scrollTo = function (x, y) {
             var top = (x && typeof x === 'object') ? x.top : y;
@@ -736,6 +734,34 @@ _SCROLL_FIX_JS = """
             }
         };
     }
+
+    // Each Streamlit rerun may replace the viewport DOM node entirely.
+    // Watch for newly added viewports and patch them immediately so the
+    // setter intercept is in place before AG Grid resets scrollTop.
+    new MutationObserver(function (muts) {
+        for (var i = 0; i < muts.length; i++) {
+            var nodes = muts[i].addedNodes;
+            for (var j = 0; j < nodes.length; j++) {
+                var n = nodes[j];
+                if (n.nodeType !== 1) continue;
+                var vps = n.classList && n.classList.contains('ag-body-viewport')
+                    ? [n]
+                    : Array.from(n.querySelectorAll ? n.querySelectorAll('.ag-body-viewport') : []);
+                for (var k = 0; k < vps.length; k++) {
+                    patch(vps[k]);
+                    // Also do a RAF-based restore in case the element was
+                    // added at scrollTop=0 without any setter call to intercept.
+                    if (guard && saved > 30) {
+                        (function (vp) {
+                            requestAnimationFrame(function () {
+                                if (guard && saved > 30) vp.scrollTop = saved;
+                            });
+                        })(vps[k]);
+                    }
+                }
+            }
+        }
+    }).observe(document, { childList: true, subtree: true });
 
     document.addEventListener('mousedown', function (e) {
         if (!e.target.closest) return;
