@@ -696,15 +696,43 @@ components.html("""
     var guard    = false;
     var guardTid = null;
 
+    // Walk the prototype chain to find the native scrollTop descriptor.
+    // We need the original getter/setter so we can call them after patching.
+    function nativeScrollTopDesc(el) {
+        var proto = Object.getPrototypeOf(el);
+        while (proto) {
+            var d = Object.getOwnPropertyDescriptor(proto, 'scrollTop');
+            if (d && d.set) return d;
+            proto = Object.getPrototypeOf(proto);
+        }
+        return null;
+    }
+
     function attach(vp) {
         if (vp._sfPatched) return;
         vp._sfPatched = true;
-        var restoring = false;
-        vp.addEventListener('scroll', function () {
-            if (restoring || !guard || vp.scrollTop > 30 || saved <= 30) return;
-            restoring = true;
-            vp.scrollTop = saved;
-            restoring = false;
+
+        var nd = nativeScrollTopDesc(vp);
+        if (!nd) return;
+
+        // Shadow the prototype's scrollTop with our own instance property.
+        // Every write goes through our setter; when the guard is armed and
+        // something tries to reset to 0, we redirect to the saved position.
+        Object.defineProperty(vp, 'scrollTop', {
+            configurable: true,
+            get: function () { return nd.get.call(this); },
+            set: function (v) {
+                if (guard && v < 10 && saved > 30) {
+                    nd.set.call(this, saved);
+                    // Keep guard alive for another 300 ms in case AG Grid
+                    // makes a second reset call, then release it so the user
+                    // can freely scroll to the top afterwards.
+                    clearTimeout(guardTid);
+                    guardTid = setTimeout(function () { guard = false; }, 300);
+                } else {
+                    nd.set.call(this, v);
+                }
+            }
         });
     }
 
@@ -714,11 +742,11 @@ components.html("""
         if (!root) return;
         var vp = root.querySelector('.ag-body-viewport');
         if (!vp) return;
-        attach(vp);
         saved = vp.scrollTop;
+        attach(vp);
         guard = true;
         clearTimeout(guardTid);
-        guardTid = setTimeout(function () { guard = false; }, 3000);
+        guardTid = setTimeout(function () { guard = false; }, 2000);
     }, true);
 })();
 </script>
