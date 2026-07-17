@@ -713,13 +713,7 @@ _SCROLL_FIX_JS = """
             configurable: true,
             get: function () { return nd.get.call(this); },
             set: function (v) {
-                if (guard && v < 10 && saved > 30) {
-                    nd.set.call(this, saved);
-                    clearTimeout(tid);
-                    tid = setTimeout(function () { guard = false; }, 300);
-                } else {
-                    nd.set.call(this, v);
-                }
+                nd.set.call(this, (guard && v < 10 && saved > 30) ? saved : v);
             }
         });
         var origScrollTo = vp.scrollTo;
@@ -727,8 +721,6 @@ _SCROLL_FIX_JS = """
             var top = (x && typeof x === 'object') ? x.top : y;
             if (guard && typeof top === 'number' && top < 10 && saved > 30) {
                 origScrollTo.call(this, { top: saved, behavior: 'instant' });
-                clearTimeout(tid);
-                tid = setTimeout(function () { guard = false; }, 300);
             } else {
                 origScrollTo.apply(this, arguments);
             }
@@ -773,7 +765,7 @@ _SCROLL_FIX_JS = """
         patch(vp);
         guard = true;
         clearTimeout(tid);
-        tid = setTimeout(function () { guard = false; }, 2000);
+        tid = setTimeout(function () { guard = false; }, 3000);
     }, true);
 })();
 """
