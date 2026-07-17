@@ -428,7 +428,13 @@ def render_movements(bank_df: pd.DataFrame, bank: str):
     )
 
     # ── Bulk assignment ───────────────────────────────────────────────────────
-    _sel = pd.DataFrame(resp["selected_rows"]) if resp["selected_rows"] else pd.DataFrame()
+    _raw_sel = resp["selected_rows"]
+    if isinstance(_raw_sel, pd.DataFrame):
+        _sel = _raw_sel.reset_index(drop=True)
+    elif _raw_sel:
+        _sel = pd.DataFrame(_raw_sel).reset_index(drop=True)
+    else:
+        _sel = pd.DataFrame()
     _n   = len(_sel)
     _bc1, _bc2, _bc3 = st.columns([3, 4, 2])
     with _bc1:
