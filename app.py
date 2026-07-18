@@ -214,7 +214,8 @@ def t(key: str, **kwargs) -> str:
     return text.format(**kwargs) if kwargs else text
 
 
-PREFIX_LEN = 20  # characters used to match "same kind" concepts
+PREFIX_LEN  = 20   # characters used to match "same kind" concepts
+HISTORY_MAX = 10   # undo/redo depth
 
 def _concept_prefix(concept: str) -> str:
     return str(concept).strip().lower()[:PREFIX_LEN]
@@ -242,9 +243,28 @@ def load_overrides() -> dict:
 
 
 def save_overrides(overrides: dict):
+    # Snapshot current file before overwriting so every save is individually recoverable
+    if OVERRIDES_FILE.exists():
+        import shutil, datetime
+        bak_dir = BASE / "backups" / "overrides"
+        bak_dir.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.datetime.now().strftime("%Y-%m-%dT%H%M%S")
+        shutil.copy2(OVERRIDES_FILE, bak_dir / f"category_overrides_{stamp}.json")
+        # Keep only the 200 most recent per-save snapshots
+        snaps = sorted((bak_dir).glob("category_overrides_*.json"), key=lambda p: p.name, reverse=True)
+        for old in snaps[200:]:
+            old.unlink()
     OVERRIDES_FILE.write_text(
         json.dumps(overrides, ensure_ascii=False, indent=2), encoding="utf-8"
     )
+
+
+def _push_history():
+    """Snapshot current overrides before a mutation so undo can restore it."""
+    st.session_state._ov_history.append(st.session_state.overrides.copy())
+    if len(st.session_state._ov_history) > HISTORY_MAX:
+        st.session_state._ov_history.pop(0)
+    st.session_state._ov_redo.clear()
 
 
 def tx_id(bank: str, date, concept: str, amount: float) -> str:
@@ -277,6 +297,10 @@ if "categories" not in st.session_state:
     st.session_state.categories = load_categories()
 if "overrides" not in st.session_state:
     st.session_state.overrides = load_overrides()
+if "_ov_history" not in st.session_state:
+    st.session_state._ov_history = []
+if "_ov_redo" not in st.session_state:
+    st.session_state._ov_redo = []
 
 raw_df = get_raw_data()
 df = apply_overrides(raw_df, st.session_state.overrides)
@@ -296,6 +320,37 @@ st.sidebar.divider()
 if st.sidebar.button(t("language_btn"), use_container_width=True):
     st.session_state.lang = "en" if st.session_state.lang == "es" else "es"
     st.rerun()
+
+st.sidebar.divider()
+_undo_n = len(st.session_state._ov_history)
+_redo_n = len(st.session_state._ov_redo)
+_ub, _rb = st.sidebar.columns(2)
+with _ub:
+    if st.button(
+        f"↩ Undo" + (f" ({_undo_n})" if _undo_n else ""),
+        disabled=(_undo_n == 0),
+        use_container_width=True,
+        key="global_undo",
+    ):
+        st.session_state._ov_redo.append(st.session_state.overrides.copy())
+        st.session_state.overrides = st.session_state._ov_history.pop()
+        save_overrides(st.session_state.overrides)
+        for _b in all_banks:
+            st.session_state[f"_gen_{_b}"] = st.session_state.get(f"_gen_{_b}", 0) + 1
+        st.rerun()
+with _rb:
+    if st.button(
+        f"↪ Redo" + (f" ({_redo_n})" if _redo_n else ""),
+        disabled=(_redo_n == 0),
+        use_container_width=True,
+        key="global_redo",
+    ):
+        st.session_state._ov_history.append(st.session_state.overrides.copy())
+        st.session_state.overrides = st.session_state._ov_redo.pop()
+        save_overrides(st.session_state.overrides)
+        for _b in all_banks:
+            st.session_state[f"_gen_{_b}"] = st.session_state.get(f"_gen_{_b}", 0) + 1
+        st.rerun()
 
 
 def apply_filters(source: pd.DataFrame) -> pd.DataFrame:
@@ -348,6 +403,7 @@ def _new_cat_dialog_body():
                     for _, mrow in matches.iterrows():
                         st.session_state.overrides[mrow["tx_id"]] = _name
                     total_matched += len(matches)
+        _push_history()
         save_overrides(st.session_state.overrides)
         st.session_state.pop(f"_pending_new_cat_{bank}", None)
         st.session_state.pop(f"_pending_concepts_{bank}", None)
@@ -388,20 +444,43 @@ def render_movements(bank_df: pd.DataFrame, bank: str):
     display["balance"] = display["balance"].round(2)
     display = display.reset_index(drop=True)
 
-    _delayed_select = JsCode("""
-class DelayedSelectEditor {
+    # _grid_cats tracks what the grid visually shows, keyed by gen so it auto-resets on
+    # any intended remount (undo/redo, new category dialog). This prevents false-positive
+    # change detection for apply-all rows that were saved but not pushed to the grid.
+    _gen = st.session_state.get(f"_gen_{bank}", 0)
+    _gc_key = f"_grid_cats_{bank}_{_gen}"
+    if _gc_key not in st.session_state:
+        st.session_state[_gc_key] = dict(zip(display["tx_id"], display["category"]))
+    _grid_cats = st.session_state[_gc_key]
+
+    # ── Phase 2: apply queued changes (runs before grid renders so spinner is visible) ──
+    _phase2_ran = False
+    _queued = st.session_state.pop(f"_queued_changes_{bank}", None)
+    if _queued:
+        _phase2_ran = True
+        _spinner_msg = f"⏳  {_queued['n_rows']} fila(s)…" if st.session_state.get("lang", "es") == "es" \
+                       else f"⏳  {_queued['n_rows']} row(s)…"
+        with st.spinner(_spinner_msg):
+            for tid, cat in _queued["changes"].items():
+                st.session_state.overrides[tid] = cat
+            _push_history()
+            save_overrides(st.session_state.overrides)
+        if _queued.get("total_matched", 0) > _queued["n_rows"]:
+            st.toast(t("apply_all_toast", n=_queued["total_matched"]), icon="✅")
+        # No gen increment, no st.rerun() — fall through to grid so filters are preserved.
+
+    _cat_renderer = JsCode("""
+class PermanentSelectRenderer {
     init(p) {
-        this.p = p;
-        this.committed = p.value;
         this._t = null;
         this.el = document.createElement('select');
         this.el.style.cssText =
-            'width:100%;height:100%;min-height:28px;font-size:inherit;' +
-            'border:none;outline:none;cursor:pointer;';
-        (p.values || []).forEach(v => {
+            'width:100%;height:100%;border:none;background:transparent;' +
+            'cursor:pointer;font-size:inherit;color:inherit;';
+        (p.colDef.cellRendererParams.values || []).forEach(v => {
             const o = document.createElement('option');
             o.value = v; o.text = v;
-            if (v === this.committed) o.selected = true;
+            if (v === p.value) o.selected = true;
             this.el.appendChild(o);
         });
         this.el.addEventListener('change', e => {
@@ -410,15 +489,13 @@ class DelayedSelectEditor {
             this.el.style.outline = '2px solid orange';
             this._t = setTimeout(() => {
                 this.el.style.outline = '';
-                this.committed = chosen;
-                p.stopEditing();
+                p.setValue(chosen);
             }, 1000);
         });
     }
-    getGui()           { return this.el; }
-    getValue()         { return this.committed; }
-    destroy()          { clearTimeout(this._t); }
-    afterGuiAttached() { this.el.focus(); }
+    getGui()     { return this.el; }
+    refresh(p)   { this.el.value = p.value || ''; return true; }
+    destroy()    { clearTimeout(this._t); }
 }
 """)
 
@@ -426,19 +503,19 @@ class DelayedSelectEditor {
     gb.configure_default_column(floatingFilter=True, filter=True, sortable=True, resizable=True)
     gb.configure_column("tx_id",   hide=True)
     gb.configure_column("date",    headerName=t("col_date"),    editable=False, width=130,
-                        headerCheckboxSelection=True, filter="agDateColumnFilter")
-    gb.configure_column("concept", headerName=t("col_concept"), editable=False, flex=2,   filter="agTextColumnFilter")
+                        filter="agDateColumnFilter")
+    gb.configure_column("concept", headerName=t("col_concept"), editable=False, flex=2,
+                        filter="agTextColumnFilter")
     gb.configure_column("amount",  headerName=t("col_amount"),  editable=False, width=130,
                         type=["numericColumn", "rightAligned"], filter="agNumberColumnFilter")
     gb.configure_column("balance", headerName=t("col_balance"), editable=False, width=130,
                         type=["numericColumn", "rightAligned"], filter="agNumberColumnFilter")
     gb.configure_column("category",
-        headerName=t("col_category"), editable=True, width=175,
-        cellEditor=_delayed_select,
-        cellEditorParams={"values": cats + [SENTINEL]},
+        headerName=t("col_category"), editable=False, width=200,
+        cellRenderer=_cat_renderer,
+        cellRendererParams={"values": cats + [SENTINEL]},
         filter="agTextColumnFilter",
     )
-    gb.configure_selection("multiple", use_checkbox=True)
     gb.configure_grid_options(suppressScrollOnNewData=True, enableCellTextSelection=True)
 
     _grid_key = f"aggrid_{bank}_{st.session_state.get(f'_gen_{bank}', 0)}"
@@ -446,7 +523,7 @@ class DelayedSelectEditor {
         display,
         gridOptions=gb.build(),
         height=600,
-        update_mode=GridUpdateMode.MANUAL,
+        update_mode=GridUpdateMode.VALUE_CHANGED,
         data_return_mode=DataReturnMode.AS_INPUT,
         theme="alpine",
         key=_grid_key,
@@ -454,90 +531,60 @@ class DelayedSelectEditor {
         allow_unsafe_jscode=True,
     )
 
-    # ── Actions bar (no reruns until the user explicitly clicks) ─────────────
-    _raw_sel = resp["selected_rows"]
-    if isinstance(_raw_sel, pd.DataFrame):
-        _sel = _raw_sel.reset_index(drop=True)
-    elif _raw_sel:
-        _sel = pd.DataFrame(_raw_sel).reset_index(drop=True)
-    else:
-        _sel = pd.DataFrame()
+    # ── Auto-save on every value change (no button needed) ───────────────────
+    def _open_dialog(tx_ids, concepts):
+        st.session_state[f"_pending_new_cat_{bank}"] = tx_ids
+        st.session_state[f"_pending_concepts_{bank}"] = concepts
+        st.session_state[f"_pending_apply_all_{bank}"] = apply_all
+        st.session_state["_dialog_bank"] = bank
+        if st.session_state.get("lang", "es") == "es":
+            _new_cat_dialog_es()
+        else:
+            _new_cat_dialog_en()
 
-    _ab1, _ab2, _ab3, _ab4 = st.columns([3, 3, 1.8, 1.5])
-    with _ab1:
-        st.caption(t("select_rows_hint"))
-    with _ab2:
-        _bcat = st.selectbox("", cats, key=f"bulk_cat_{bank}", label_visibility="collapsed")
-    with _ab3:
-        _do_bulk = st.button(t("bulk_apply_btn"), key=f"bulk_apply_{bank}", use_container_width=True)
-    with _ab4:
-        _do_save = st.button("💾 " + t("save_btn"), key=f"save_{bank}",
-                             type="primary", use_container_width=True)
-
-    # ── Process only when the user explicitly clicked Save or Apply ───────────
     _opened_dialog = False
 
-    if _do_save or _do_bulk:
+    if not _phase2_ran:
+        # Phase 1: detect VALUE_CHANGED events. Compare against _grid_cats (what the grid
+        # actually shows), not display (saved state), to avoid false positives from
+        # apply-all rows that were persisted but not pushed into the grid visually.
         edited = pd.DataFrame(resp["data"]).reset_index(drop=True)
 
         if "category" in edited.columns and not edited.empty:
-            changed      = edited["category"].fillna("") != display["category"].fillna("")
+            grid_cat_series = display["tx_id"].map(_grid_cats).fillna(display["category"])
+            changed      = edited["category"].fillna("") != grid_cat_series.fillna("")
             sentinel_sel = changed & (edited["category"] == SENTINEL)
             real_changes = changed & ~sentinel_sel
 
-            # Save individual cell edits
-            total_matched = 0
-            for idx in display.index[real_changes]:
-                new_cat = edited.loc[idx, "category"]
-                st.session_state.overrides[display.loc[idx, "tx_id"]] = new_cat
-                if apply_all:
-                    prefix = _concept_prefix(display.loc[idx, "concept"])
-                    if prefix:
-                        matches = df[df["concept"].str.strip().str.lower().str.startswith(prefix)]
-                        for _, mrow in matches.iterrows():
-                            st.session_state.overrides[mrow["tx_id"]] = new_cat
-                        total_matched += len(matches)
-
-            # Bulk apply to selected rows
-            _bulk_total = 0
-            if _do_bulk and not _sel.empty:
-                for _, _sr in _sel.iterrows():
-                    st.session_state.overrides[_sr["tx_id"]] = _bcat
+            if real_changes.any():
+                pending_changes = {}
+                total_matched = 0
+                for idx in display.index[real_changes]:
+                    new_cat = edited.loc[idx, "category"]
+                    tid     = display.loc[idx, "tx_id"]
+                    pending_changes[tid] = new_cat
+                    _grid_cats[tid] = new_cat  # track direct change in grid state
                     if apply_all:
-                        _pfx = _concept_prefix(_sr["concept"])
-                        if _pfx:
-                            _ms = df[df["concept"].str.strip().str.lower().str.startswith(_pfx)]
-                            for _, _mr in _ms.iterrows():
-                                st.session_state.overrides[_mr["tx_id"]] = _bcat
-                            _bulk_total += len(_ms)
-
-            _any_saved = real_changes.any() or (_do_bulk and not _sel.empty)
-            if _any_saved:
-                save_overrides(st.session_state.overrides)
-                if apply_all and total_matched > 0:
-                    st.toast(t("apply_all_toast", n=total_matched), icon="✅")
-                if _do_bulk and not _sel.empty:
-                    st.toast(t("bulk_applied", cat=_bcat, n=len(_sel)), icon="✅")
-                    if apply_all and _bulk_total > len(_sel):
-                        st.toast(t("apply_all_toast", n=_bulk_total), icon="✅")
-                st.session_state[f"_gen_{bank}"] = st.session_state.get(f"_gen_{bank}", 0) + 1
+                        prefix = _concept_prefix(display.loc[idx, "concept"])
+                        if prefix:
+                            matches = df[df["concept"].str.strip().str.lower()
+                                         .str.startswith(prefix)]
+                            for _, mrow in matches.iterrows():
+                                pending_changes[mrow["tx_id"]] = new_cat
+                            total_matched += len(matches)
+                st.session_state[f"_queued_changes_{bank}"] = {
+                    "changes":       pending_changes,
+                    "n_rows":        int(real_changes.sum()),
+                    "total_matched": total_matched,
+                }
                 st.rerun()
 
-            # Sentinel → open new-category dialog
             if sentinel_sel.any():
                 _opened_dialog = True
-                st.session_state[f"_pending_new_cat_{bank}"] = [
-                    display.loc[idx, "tx_id"] for idx in display.index[sentinel_sel]
-                ]
-                st.session_state[f"_pending_concepts_{bank}"] = [
-                    display.loc[idx, "concept"] for idx in display.index[sentinel_sel]
-                ]
-                st.session_state[f"_pending_apply_all_{bank}"] = apply_all
-                st.session_state["_dialog_bank"] = bank
-                if st.session_state.get("lang", "es") == "es":
-                    _new_cat_dialog_es()
-                else:
-                    _new_cat_dialog_en()
+                _open_dialog(
+                    [display.loc[idx, "tx_id"] for idx in display.index[sentinel_sel]],
+                    [display.loc[idx, "concept"] for idx in display.index[sentinel_sel]],
+                )
 
     if not _opened_dialog and st.session_state.get(f"_pending_new_cat_{bank}"):
         st.session_state.pop(f"_pending_new_cat_{bank}", None)
