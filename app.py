@@ -553,7 +553,7 @@ class PermanentSelectRenderer {
 
     _opened_dialog = False
 
-    if not _phase2_ran:
+    if not _phase2_ran and not _do_refresh:
         # Phase 1: detect VALUE_CHANGED events. Compare against _grid_cats (what the grid
         # actually shows), not display (saved state), to avoid false positives from
         # apply-all rows that were persisted but not pushed into the grid visually.
