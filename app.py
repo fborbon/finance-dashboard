@@ -398,10 +398,13 @@ def _new_cat_dialog_body():
             st.session_state.overrides[tid] = _name
         total_matched = 0
         if apply_all:
+            _bank_full = df[df["bank"] == bank]  # all dates, this bank only
             for concept in concepts:
                 prefix = _concept_prefix(concept)
                 if prefix:
-                    matches = df[df["concept"].str.strip().str.lower().str.startswith(prefix)]
+                    matches = _bank_full[
+                        _bank_full["concept"].str.strip().str.lower().str.startswith(prefix)
+                    ]
                     for _, mrow in matches.iterrows():
                         st.session_state.overrides[mrow["tx_id"]] = _name
                     total_matched += len(matches)
@@ -565,6 +568,7 @@ class PermanentSelectRenderer {
             if real_changes.any():
                 pending_changes = {}
                 total_matched = 0
+                _bank_full = df[df["bank"] == bank]  # all dates, this bank only
                 for idx in display.index[real_changes]:
                     new_cat = edited.loc[idx, "category"]
                     tid     = display.loc[idx, "tx_id"]
@@ -573,8 +577,10 @@ class PermanentSelectRenderer {
                     if apply_all:
                         prefix = _concept_prefix(display.loc[idx, "concept"])
                         if prefix:
-                            matches = df[df["concept"].str.strip().str.lower()
-                                         .str.startswith(prefix)]
+                            matches = _bank_full[
+                                _bank_full["concept"].str.strip().str.lower()
+                                .str.startswith(prefix)
+                            ]
                             for _, mrow in matches.iterrows():
                                 pending_changes[mrow["tx_id"]] = new_cat
                             total_matched += len(matches)
