@@ -458,13 +458,10 @@ def render_movements(bank_df: pd.DataFrame, bank: str):
     _queued = st.session_state.pop(f"_queued_changes_{bank}", None)
     if _queued:
         _phase2_ran = True
-        _spinner_msg = f"⏳  {_queued['n_rows']} fila(s)…" if st.session_state.get("lang", "es") == "es" \
-                       else f"⏳  {_queued['n_rows']} row(s)…"
-        with st.spinner(_spinner_msg):
-            for tid, cat in _queued["changes"].items():
-                st.session_state.overrides[tid] = cat
-            _push_history()
-            save_overrides(st.session_state.overrides)
+        for tid, cat in _queued["changes"].items():
+            st.session_state.overrides[tid] = cat
+        _push_history()
+        save_overrides(st.session_state.overrides)
         if _queued.get("total_matched", 0) > _queued["n_rows"]:
             st.toast(t("apply_all_toast", n=_queued["total_matched"]), icon="✅")
         # No gen increment, no st.rerun() — fall through to grid so filters are preserved.
