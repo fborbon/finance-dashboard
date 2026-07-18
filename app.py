@@ -134,6 +134,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "select_rows_hint": "☑ Selecciona filas · elige categoría · Aplicar o Guardar",
         "bulk_applied":     "'{cat}' aplicado a {n} fila(s)",
         "save_btn":         "Guardar",
+        "refresh_btn":      "🔄 Actualizar tabla",
     },
     "en": {
         "page_title": "💳 Bank Dashboard",
@@ -204,6 +205,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "select_rows_hint": "☑ Select rows · pick category · Apply or Save",
         "bulk_applied":     "'{cat}' applied to {n} row(s)",
         "save_btn":         "Save",
+        "refresh_btn":      "🔄 Refresh table",
     },
 }
 
@@ -431,12 +433,18 @@ def render_movements(bank_df: pd.DataFrame, bank: str):
     SENTINEL = t("add_cat_sentinel")
     cats = st.session_state.categories
 
-    apply_all = st.checkbox(
-        t("apply_all_checkbox"),
-        key=f"apply_all_{bank}",
-        help=t("apply_all_help"),
-        value=True,
-    )
+    _chk_col, _btn_col = st.columns([4, 1])
+    with _chk_col:
+        apply_all = st.checkbox(
+            t("apply_all_checkbox"),
+            key=f"apply_all_{bank}",
+            help=t("apply_all_help"),
+            value=True,
+        )
+    with _btn_col:
+        if st.button(t("refresh_btn"), key=f"refresh_btn_{bank}", use_container_width=True):
+            st.session_state[f"_refresh_{bank}"] = True
+            st.rerun()
 
     display = bank_df[["date", "concept", "amount", "balance", "category", "tx_id"]].copy()
     display["date"]    = display["date"].dt.strftime("%Y-%m-%d")
@@ -447,9 +455,10 @@ def render_movements(bank_df: pd.DataFrame, bank: str):
     # _grid_cats tracks what the grid visually shows, keyed by gen so it auto-resets on
     # any intended remount (undo/redo, new category dialog). This prevents false-positive
     # change detection for apply-all rows that were saved but not pushed to the grid.
+    _do_refresh = st.session_state.pop(f"_refresh_{bank}", False)
     _gen = st.session_state.get(f"_gen_{bank}", 0)
     _gc_key = f"_grid_cats_{bank}_{_gen}"
-    if _gc_key not in st.session_state:
+    if _gc_key not in st.session_state or _do_refresh:
         st.session_state[_gc_key] = dict(zip(display["tx_id"], display["category"]))
     _grid_cats = st.session_state[_gc_key]
 
@@ -524,7 +533,7 @@ class PermanentSelectRenderer {
         data_return_mode=DataReturnMode.AS_INPUT,
         theme="alpine",
         key=_grid_key,
-        reload_data=False,
+        reload_data=_do_refresh,
         allow_unsafe_jscode=True,
     )
 
