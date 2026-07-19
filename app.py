@@ -135,6 +135,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "bulk_applied":     "'{cat}' aplicado a {n} fila(s)",
         "save_btn":         "Guardar",
         "refresh_btn":      "🔄 Actualizar tabla",
+        "bulk_cat_label":   "Categoría para selección",
     },
     "en": {
         "page_title": "💳 Bank Dashboard",
@@ -206,6 +207,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "bulk_applied":     "'{cat}' applied to {n} row(s)",
         "save_btn":         "Save",
         "refresh_btn":      "🔄 Refresh table",
+        "bulk_cat_label":   "Category for selection",
     },
 }
 
@@ -510,9 +512,17 @@ class PermanentSelectRenderer {
 
     gb = GridOptionsBuilder.from_dataframe(display)
     gb.configure_default_column(floatingFilter=True, filter=True, sortable=True, resizable=True)
+    gb.configure_selection(
+        selection_mode="multiple",
+        use_checkbox=True,
+        suppressRowClickSelection=True,
+    )
     gb.configure_column("tx_id",   hide=True)
     gb.configure_column("date",    headerName=t("col_date"),    editable=False, width=130,
-                        filter="agDateColumnFilter")
+                        filter="agDateColumnFilter",
+                        checkboxSelection=True,
+                        headerCheckboxSelection=True,
+                        headerCheckboxSelectionFilteredOnly=True)
     gb.configure_column("concept", headerName=t("col_concept"), editable=False, flex=2,
                         filter="agTextColumnFilter")
     gb.configure_column("amount",  headerName=t("col_amount"),  editable=False, width=130,
@@ -532,7 +542,7 @@ class PermanentSelectRenderer {
         display,
         gridOptions=gb.build(),
         height=600,
-        update_mode=GridUpdateMode.VALUE_CHANGED,
+        update_mode=GridUpdateMode.VALUE_CHANGED | GridUpdateMode.SELECTION_CHANGED,
         data_return_mode=DataReturnMode.AS_INPUT,
         theme="alpine",
         key=_grid_key,
@@ -550,6 +560,35 @@ class PermanentSelectRenderer {
             _new_cat_dialog_es()
         else:
             _new_cat_dialog_en()
+
+    # ── Bulk selection apply ─────────────────────────────────────────────────────
+    _raw_sel = resp["selected_rows"]
+    _sel_df  = _raw_sel if isinstance(_raw_sel, pd.DataFrame) else (
+                   pd.DataFrame(_raw_sel) if _raw_sel else pd.DataFrame()
+               )
+    n_selected = len(_sel_df)
+
+    if n_selected > 0:
+        _sel_col, _cat_col, _btn_col = st.columns([2, 3, 2])
+        with _sel_col:
+            st.info(t("rows_selected", n=n_selected))
+        with _cat_col:
+            _bulk_cat = st.selectbox(
+                t("bulk_cat_label"),
+                options=cats,
+                key=f"bulk_cat_{bank}",
+                label_visibility="collapsed",
+            )
+        with _btn_col:
+            if st.button(t("bulk_apply_btn"), key=f"bulk_apply_{bank}", use_container_width=True, type="primary"):
+                _bulk_ids = list(_sel_df["tx_id"]) if "tx_id" in _sel_df.columns else []
+                if _bulk_ids:
+                    st.session_state[f"_queued_changes_{bank}"] = {
+                        "changes":       {tid: _bulk_cat for tid in _bulk_ids},
+                        "n_rows":        len(_bulk_ids),
+                        "total_matched": len(_bulk_ids),
+                    }
+                    st.rerun()
 
     _opened_dialog = False
 
