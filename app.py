@@ -444,7 +444,7 @@ def render_movements(bank_df: pd.DataFrame, bank: str):
             t("apply_all_checkbox"),
             key=f"apply_all_{bank}",
             help=t("apply_all_help"),
-            value=True,
+            value=False,
         )
     with _btn_col:
         if st.button(t("refresh_btn"), key=f"refresh_btn_{bank}", use_container_width=True):
