@@ -591,6 +591,9 @@ class PermanentSelectRenderer {
         cellRenderer=_cat_renderer,
         cellRendererParams={"values": cats + [SENTINEL]},
         filter="agTextColumnFilter",
+        filterValueGetter=JsCode(
+            "function(p) { return p.data ? p.data.category : ''; }"
+        ),
     )
     gb.configure_grid_options(suppressScrollOnNewData=True, enableCellTextSelection=True)
 
