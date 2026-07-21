@@ -349,6 +349,7 @@ def apply_overrides(raw: pd.DataFrame, overrides: dict) -> pd.DataFrame:
     )
     for tid, cat in overrides.items():
         df.loc[df["tx_id"] == tid, "category"] = cat
+    df["category"] = df["category"].fillna("other").replace("accommodation", "other")
     return df
 
 
@@ -503,6 +504,19 @@ def render_movements(bank_df: pd.DataFrame, bank: str):
     SENTINEL = t("add_cat_sentinel")
     cats = st.session_state.categories
 
+    _ck2_col, _btn2_col = st.columns([4, 1])
+    with _ck2_col:
+        apply_all = st.checkbox(
+            t("apply_all_checkbox"),
+            key=f"apply_all_{bank}",
+            help=t("apply_all_help"),
+            value=False,
+        )
+    with _btn2_col:
+        if st.button(t("refresh_btn"), key=f"refresh_btn_{bank}", use_container_width=True):
+            st.session_state[f"_refresh_{bank}"] = True
+            st.rerun()
+
     display = bank_df[["date", "concept", "amount", "balance", "category", "tx_id"]].copy()
     display["date"]     = display["date"].dt.strftime("%Y-%m-%d")
     display["amount"]   = display["amount"].round(2)
@@ -544,43 +558,6 @@ def render_movements(bank_df: pd.DataFrame, bank: str):
         st.session_state[_gc_key] = dict(zip(display["tx_id"], display["category"]))
         _grid_cats = st.session_state[_gc_key]
         _do_refresh = True  # trigger setRowData() — AG Grid re-applies filter model
-
-    # ── Controls: apply-all | category filter | refresh ───────────────────────
-    _all_opt = t("filter_all")
-    _prev_flt = st.session_state.get(f"_cat_flt_prev_{bank}", _all_opt)
-
-    _ck_col, _flt_col, _btn_col = st.columns([3, 3, 1])
-    with _ck_col:
-        apply_all = st.checkbox(
-            t("apply_all_checkbox"),
-            key=f"apply_all_{bank}",
-            help=t("apply_all_help"),
-            value=False,
-        )
-    with _flt_col:
-        _unique_cats = sorted(display["category"].dropna().unique().tolist())
-        _cat_flt = st.selectbox(
-            _all_opt,
-            [_all_opt] + _unique_cats,
-            key=f"cat_flt_{bank}",
-            label_visibility="collapsed",
-        )
-    with _btn_col:
-        if st.button(t("refresh_btn"), key=f"refresh_btn_{bank}", use_container_width=True):
-            st.session_state[f"_refresh_{bank}"] = True
-            st.rerun()
-
-    _filter_changed = _cat_flt != _prev_flt
-    st.session_state[f"_cat_flt_prev_{bank}"] = _cat_flt
-    if _filter_changed:
-        _do_refresh = True
-
-    if _cat_flt != _all_opt:
-        display = display[display["category"] == _cat_flt].copy().reset_index(drop=True)
-
-    if _filter_changed:
-        st.session_state[_gc_key] = dict(zip(display["tx_id"], display["category"]))
-        _grid_cats = st.session_state[_gc_key]
 
     _cat_renderer = JsCode("""
 class PermanentSelectRenderer {
@@ -636,8 +613,7 @@ class PermanentSelectRenderer {
         headerName=t("col_category"), editable=False, width=200,
         cellRenderer=_cat_renderer,
         cellRendererParams={"values": cats + [SENTINEL]},
-        filter=False,
-        floatingFilter=False,
+        filter="agTextColumnFilter",
     )
     gb.configure_grid_options(suppressScrollOnNewData=True, enableCellTextSelection=True)
 
