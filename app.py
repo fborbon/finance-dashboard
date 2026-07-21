@@ -137,6 +137,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "refresh_btn":      "🔄 Actualizar tabla",
         "bulk_cat_label":   "Categoría para selección",
         "auto_classified":  "✅ {n} fila(s) categorizadas automáticamente.",
+        "filter_all":       "(Todas las categorías)",
     },
     "en": {
         "page_title": "💳 Bank Dashboard",
@@ -210,6 +211,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "refresh_btn":      "🔄 Refresh table",
         "bulk_cat_label":   "Category for selection",
         "auto_classified":  "✅ {n} row(s) auto-classified.",
+        "filter_all":       "(All categories)",
     },
 }
 
@@ -357,7 +359,13 @@ if "lang" not in st.session_state:
 if "categories" not in st.session_state:
     st.session_state.categories = load_categories()
 if "overrides" not in st.session_state:
-    st.session_state.overrides = load_overrides()
+    _raw_ov = load_overrides()
+    _acc_tids = [_t for _t, _c in _raw_ov.items() if _c == "accommodation"]
+    if _acc_tids:
+        for _t in _acc_tids:
+            _raw_ov[_t] = "other"
+        save_overrides(_raw_ov)
+    st.session_state.overrides = _raw_ov
 if "_ov_history" not in st.session_state:
     st.session_state._ov_history = []
 if "_ov_redo" not in st.session_state:
@@ -495,24 +503,11 @@ def render_movements(bank_df: pd.DataFrame, bank: str):
     SENTINEL = t("add_cat_sentinel")
     cats = st.session_state.categories
 
-    _chk_col, _btn_col = st.columns([4, 1])
-    with _chk_col:
-        apply_all = st.checkbox(
-            t("apply_all_checkbox"),
-            key=f"apply_all_{bank}",
-            help=t("apply_all_help"),
-            value=False,
-        )
-    with _btn_col:
-        if st.button(t("refresh_btn"), key=f"refresh_btn_{bank}", use_container_width=True):
-            st.session_state[f"_refresh_{bank}"] = True
-            st.rerun()
-
     display = bank_df[["date", "concept", "amount", "balance", "category", "tx_id"]].copy()
     display["date"]     = display["date"].dt.strftime("%Y-%m-%d")
     display["amount"]   = display["amount"].round(2)
     display["balance"]  = display["balance"].round(2)
-    display["category"] = display["category"].fillna("other")
+    display["category"] = display["category"].fillna("other").replace("accommodation", "other")
     display = display.reset_index(drop=True)
 
     # _grid_cats tracks what the grid visually shows, keyed by gen so it auto-resets on
@@ -544,11 +539,48 @@ def render_movements(bank_df: pd.DataFrame, bank: str):
         display["date"]     = display["date"].dt.strftime("%Y-%m-%d")
         display["amount"]   = display["amount"].round(2)
         display["balance"]  = display["balance"].round(2)
-        display["category"] = display["category"].fillna("other")
+        display["category"] = display["category"].fillna("other").replace("accommodation", "other")
         display = display.reset_index(drop=True)
         st.session_state[_gc_key] = dict(zip(display["tx_id"], display["category"]))
         _grid_cats = st.session_state[_gc_key]
         _do_refresh = True  # trigger setRowData() — AG Grid re-applies filter model
+
+    # ── Controls: apply-all | category filter | refresh ───────────────────────
+    _all_opt = t("filter_all")
+    _prev_flt = st.session_state.get(f"_cat_flt_prev_{bank}", _all_opt)
+
+    _ck_col, _flt_col, _btn_col = st.columns([3, 3, 1])
+    with _ck_col:
+        apply_all = st.checkbox(
+            t("apply_all_checkbox"),
+            key=f"apply_all_{bank}",
+            help=t("apply_all_help"),
+            value=False,
+        )
+    with _flt_col:
+        _unique_cats = sorted(display["category"].dropna().unique().tolist())
+        _cat_flt = st.selectbox(
+            _all_opt,
+            [_all_opt] + _unique_cats,
+            key=f"cat_flt_{bank}",
+            label_visibility="collapsed",
+        )
+    with _btn_col:
+        if st.button(t("refresh_btn"), key=f"refresh_btn_{bank}", use_container_width=True):
+            st.session_state[f"_refresh_{bank}"] = True
+            st.rerun()
+
+    _filter_changed = _cat_flt != _prev_flt
+    st.session_state[f"_cat_flt_prev_{bank}"] = _cat_flt
+    if _filter_changed:
+        _do_refresh = True
+
+    if _cat_flt != _all_opt:
+        display = display[display["category"] == _cat_flt].copy().reset_index(drop=True)
+
+    if _filter_changed:
+        st.session_state[_gc_key] = dict(zip(display["tx_id"], display["category"]))
+        _grid_cats = st.session_state[_gc_key]
 
     _cat_renderer = JsCode("""
 class PermanentSelectRenderer {
@@ -558,10 +590,11 @@ class PermanentSelectRenderer {
         this.el.style.cssText =
             'width:100%;height:100%;border:none;background:transparent;' +
             'cursor:pointer;font-size:inherit;color:inherit;';
+        const _val = p.value || 'other';
         (p.colDef.cellRendererParams.values || []).forEach(v => {
             const o = document.createElement('option');
             o.value = v; o.text = v;
-            if (v === p.value) o.selected = true;
+            if (v === _val) o.selected = true;
             this.el.appendChild(o);
         });
         this.el.addEventListener('change', e => {
@@ -575,7 +608,7 @@ class PermanentSelectRenderer {
         });
     }
     getGui()     { return this.el; }
-    refresh(p)   { this.el.value = p.value || ''; return true; }
+    refresh(p)   { this.el.value = p.value || 'other'; return true; }
     destroy()    { clearTimeout(this._t); }
 }
 """)
@@ -603,14 +636,8 @@ class PermanentSelectRenderer {
         headerName=t("col_category"), editable=False, width=200,
         cellRenderer=_cat_renderer,
         cellRendererParams={"values": cats + [SENTINEL]},
-        filter="agTextColumnFilter",
-        # valueGetter is a first-class JsCode property that streamlit-aggrid
-        # always deserializes correctly. AG Grid uses it for every value
-        # access path — including the text filter — so filtering by category
-        # works regardless of what the <select> renderer puts in the DOM.
-        valueGetter=JsCode(
-            "function(p) { return p.data ? (p.data.category || 'other') : ''; }"
-        ),
+        filter=False,
+        floatingFilter=False,
     )
     gb.configure_grid_options(suppressScrollOnNewData=True, enableCellTextSelection=True)
 
