@@ -604,8 +604,12 @@ class PermanentSelectRenderer {
         cellRenderer=_cat_renderer,
         cellRendererParams={"values": cats + [SENTINEL]},
         filter="agTextColumnFilter",
-        filterValueGetter=JsCode(
-            "function(p) { return p.data ? p.data.category : ''; }"
+        # valueGetter is a first-class JsCode property that streamlit-aggrid
+        # always deserializes correctly. AG Grid uses it for every value
+        # access path — including the text filter — so filtering by category
+        # works regardless of what the <select> renderer puts in the DOM.
+        valueGetter=JsCode(
+            "function(p) { return p.data ? (p.data.category || 'other') : ''; }"
         ),
     )
     gb.configure_grid_options(suppressScrollOnNewData=True, enableCellTextSelection=True)
