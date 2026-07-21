@@ -521,7 +521,15 @@ def render_movements(bank_df: pd.DataFrame, bank: str):
     display["date"]     = display["date"].dt.strftime("%Y-%m-%d")
     display["amount"]   = display["amount"].round(2)
     display["balance"]  = display["balance"].round(2)
-    display["category"] = display["category"].fillna("other").replace("accommodation", "other")
+    # Normalize: any category not in the user's list falls back to "other" so the
+    # renderer always has a valid option to select (avoids browser defaulting to
+    # the first option — "accommodation" — when the value is unrecognised).
+    _valid_cats = set(cats)
+    display["category"] = (
+        display["category"]
+        .fillna("other")
+        .where(display["category"].isin(_valid_cats), "other")
+    )
     display = display.reset_index(drop=True)
 
     # _grid_cats tracks what the grid visually shows, keyed by gen so it auto-resets on
@@ -553,7 +561,11 @@ def render_movements(bank_df: pd.DataFrame, bank: str):
         display["date"]     = display["date"].dt.strftime("%Y-%m-%d")
         display["amount"]   = display["amount"].round(2)
         display["balance"]  = display["balance"].round(2)
-        display["category"] = display["category"].fillna("other").replace("accommodation", "other")
+        display["category"] = (
+            display["category"]
+            .fillna("other")
+            .where(display["category"].isin(_valid_cats), "other")
+        )
         display = display.reset_index(drop=True)
         st.session_state[_gc_key] = dict(zip(display["tx_id"], display["category"]))
         _grid_cats = st.session_state[_gc_key]
@@ -567,8 +579,10 @@ class PermanentSelectRenderer {
         this.el.style.cssText =
             'width:100%;height:100%;border:none;background:transparent;' +
             'cursor:pointer;font-size:inherit;color:inherit;';
-        const _val = p.value || 'other';
-        (p.colDef.cellRendererParams.values || []).forEach(v => {
+        const _opts = p.colDef.cellRendererParams.values || [];
+        const _raw  = p.value || '';
+        const _val  = _opts.indexOf(_raw) >= 0 ? _raw : 'other';
+        _opts.forEach(v => {
             const o = document.createElement('option');
             o.value = v; o.text = v;
             if (v === _val) o.selected = true;
@@ -585,7 +599,12 @@ class PermanentSelectRenderer {
         });
     }
     getGui()     { return this.el; }
-    refresh(p)   { this.el.value = p.value || 'other'; return true; }
+    refresh(p)   {
+        const _opts = p.colDef.cellRendererParams.values || [];
+        const _raw  = p.value || '';
+        this.el.value = _opts.indexOf(_raw) >= 0 ? _raw : 'other';
+        return true;
+    }
     destroy()    { clearTimeout(this._t); }
 }
 """)
