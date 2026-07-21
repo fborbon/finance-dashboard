@@ -509,9 +509,10 @@ def render_movements(bank_df: pd.DataFrame, bank: str):
             st.rerun()
 
     display = bank_df[["date", "concept", "amount", "balance", "category", "tx_id"]].copy()
-    display["date"]    = display["date"].dt.strftime("%Y-%m-%d")
-    display["amount"]  = display["amount"].round(2)
-    display["balance"] = display["balance"].round(2)
+    display["date"]     = display["date"].dt.strftime("%Y-%m-%d")
+    display["amount"]   = display["amount"].round(2)
+    display["balance"]  = display["balance"].round(2)
+    display["category"] = display["category"].fillna("other")
     display = display.reset_index(drop=True)
 
     # _grid_cats tracks what the grid visually shows, keyed by gen so it auto-resets on
@@ -535,7 +536,19 @@ def render_movements(bank_df: pd.DataFrame, bank: str):
         save_overrides(st.session_state.overrides)
         if _queued.get("total_matched", 0) > _queued["n_rows"]:
             st.toast(t("apply_all_toast", n=_queued["total_matched"]), icon="✅")
-        # No gen increment, no st.rerun() — fall through to grid so filters are preserved.
+        # Rebuild display from fresh overrides so setRowData() sends correct categories
+        # (including apply-all rows) and the AG Grid filter model is re-applied correctly.
+        _fresh = apply_overrides(get_raw_data(), st.session_state.overrides)
+        _fresh = apply_filters(_fresh[_fresh["bank"] == bank])
+        display = _fresh[["date", "concept", "amount", "balance", "category", "tx_id"]].copy()
+        display["date"]     = display["date"].dt.strftime("%Y-%m-%d")
+        display["amount"]   = display["amount"].round(2)
+        display["balance"]  = display["balance"].round(2)
+        display["category"] = display["category"].fillna("other")
+        display = display.reset_index(drop=True)
+        st.session_state[_gc_key] = dict(zip(display["tx_id"], display["category"]))
+        _grid_cats = st.session_state[_gc_key]
+        _do_refresh = True  # trigger setRowData() — AG Grid re-applies filter model
 
     _cat_renderer = JsCode("""
 class PermanentSelectRenderer {
