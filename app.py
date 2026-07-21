@@ -599,7 +599,7 @@ class PermanentSelectRenderer {
         edited = pd.DataFrame(resp["data"]).reset_index(drop=True)
 
         if "category" in edited.columns and "tx_id" in edited.columns and not edited.empty:
-            _edited_by_tid  = edited.set_index("tx_id")["category"]
+            _edited_by_tid  = dict(zip(edited["tx_id"], edited["category"]))
             grid_cat_series = display["tx_id"].map(_grid_cats).fillna(display["category"])
             # What the grid currently shows for each display row; NaN for rows not yet in grid
             _shown = display["tx_id"].map(_edited_by_tid)
