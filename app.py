@@ -593,15 +593,20 @@ class PermanentSelectRenderer {
     _opened_dialog = False
 
     if not _phase2_ran and not _do_refresh:
-        # Phase 1: detect VALUE_CHANGED events. Compare against _grid_cats (what the grid
-        # actually shows), not display (saved state), to avoid false positives from
-        # apply-all rows that were persisted but not pushed into the grid visually.
+        # Phase 1: detect VALUE_CHANGED events. Align by tx_id (not by position) so
+        # this is safe when display grows after a file upload while the grid still
+        # holds the old row count in resp["data"].
         edited = pd.DataFrame(resp["data"]).reset_index(drop=True)
 
-        if "category" in edited.columns and not edited.empty:
+        if "category" in edited.columns and "tx_id" in edited.columns and not edited.empty:
+            _edited_by_tid  = edited.set_index("tx_id")["category"]
             grid_cat_series = display["tx_id"].map(_grid_cats).fillna(display["category"])
-            changed      = edited["category"].fillna("") != grid_cat_series.fillna("")
-            sentinel_sel = changed & (edited["category"] == SENTINEL)
+            # What the grid currently shows for each display row; NaN for rows not yet in grid
+            _shown = display["tx_id"].map(_edited_by_tid)
+            # Changed = grid shows something different from what _grid_cats recorded.
+            # New rows (NaN in _shown) are never treated as changed.
+            changed      = _shown.fillna(grid_cat_series).fillna("") != grid_cat_series.fillna("")
+            sentinel_sel = changed & (_shown == SENTINEL)
             real_changes = changed & ~sentinel_sel
 
             if real_changes.any():
@@ -609,7 +614,7 @@ class PermanentSelectRenderer {
                 total_matched = 0
                 _bank_full = df[df["bank"] == bank]  # all dates, this bank only
                 for idx in display.index[real_changes]:
-                    new_cat = edited.loc[idx, "category"]
+                    new_cat = _shown.loc[idx]
                     tid     = display.loc[idx, "tx_id"]
                     pending_changes[tid] = new_cat
                     _grid_cats[tid] = new_cat  # track direct change in grid state
