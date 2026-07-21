@@ -136,6 +136,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "save_btn":         "Guardar",
         "refresh_btn":      "🔄 Actualizar tabla",
         "bulk_cat_label":   "Categoría para selección",
+        "auto_classified":  "✅ {n} fila(s) categorizadas automáticamente.",
     },
     "en": {
         "page_title": "💳 Bank Dashboard",
@@ -208,6 +209,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "save_btn":         "Save",
         "refresh_btn":      "🔄 Refresh table",
         "bulk_cat_label":   "Category for selection",
+        "auto_classified":  "✅ {n} row(s) auto-classified.",
     },
 }
 
@@ -261,6 +263,61 @@ def save_overrides(overrides: dict):
     OVERRIDES_FILE.write_text(
         json.dumps(overrides, ensure_ascii=False, indent=2), encoding="utf-8"
     )
+
+
+def _auto_classify_after_upload(bank: str) -> int:
+    """Scan new tx_ids in `bank` and apply categories learned from existing overrides.
+
+    Builds concept-prefix rules (lengths 5-30 chars) from every non-'other' override,
+    discards any prefix that is ambiguous (maps to two different categories), then for
+    each new tx_id tries the longest matching prefix. Returns the number of rows classified.
+    """
+    from data_loader import load_all as _load_all
+    fresh = _load_all()
+    overrides = st.session_state.overrides
+
+    fresh = fresh.copy()
+    fresh["_tid"] = fresh.apply(
+        lambda r: tx_id(r["bank"], r["date"], r["concept"], r["amount"]), axis=1
+    )
+
+    # Build prefix → category from every known non-'other' override.
+    # A prefix is discarded if it maps to more than one category (ambiguous).
+    prefix_rules: dict = {}  # prefix → category | None (None = ambiguous)
+    _tid_to_concept = fresh.set_index("_tid")["concept"].to_dict()
+    for tid, cat in overrides.items():
+        if cat == "other" or tid not in _tid_to_concept:
+            continue
+        concept = str(_tid_to_concept[tid]).strip().lower()
+        for length in range(5, min(len(concept) + 1, 31)):
+            p = concept[:length]
+            if p not in prefix_rules:
+                prefix_rules[p] = cat
+            elif prefix_rules[p] != cat:
+                prefix_rules[p] = None  # ambiguous
+    prefix_rules = {p: c for p, c in prefix_rules.items() if c is not None}
+
+    # Apply to unclassified rows in the uploaded bank only.
+    new_overrides = {}
+    for _, row in fresh[fresh["bank"] == bank].iterrows():
+        tid = row["_tid"]
+        if tid in overrides:
+            continue
+        concept = str(row["concept"]).strip().lower()
+        best_cat = None
+        for length in range(min(len(concept), 30), 4, -1):
+            if concept[:length] in prefix_rules:
+                best_cat = prefix_rules[concept[:length]]
+                break
+        if best_cat:
+            new_overrides[tid] = best_cat
+
+    if new_overrides:
+        st.session_state.overrides.update(new_overrides)
+        _push_history()
+        save_overrides(st.session_state.overrides)
+
+    return len(new_overrides)
 
 
 def _push_history():
@@ -762,8 +819,11 @@ def render_upload(bank: str):
         bank_dir.mkdir(parents=True, exist_ok=True)
         dest = bank_dir / uploaded.name
         dest.write_bytes(uploaded.getbuffer())
-        st.success(t("upload_success", name=uploaded.name))
         get_raw_data.clear()
+        n_auto = _auto_classify_after_upload(bank)
+        st.success(t("upload_success", name=uploaded.name))
+        if n_auto:
+            st.toast(t("auto_classified", n=n_auto))
         st.rerun()
 
 
