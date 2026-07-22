@@ -570,6 +570,11 @@ def render_movements(bank_df: pd.DataFrame, bank: str):
         st.session_state[_gc_key] = dict(zip(display["tx_id"], display["category"]))
         _grid_cats = st.session_state[_gc_key]
         _do_refresh = True  # trigger setRowData() — AG Grid re-applies filter model
+        # Guard against stale resp["data"] in the rerun immediately after reload:
+        # AgGrid can send pre-setRowData state before the browser applies the new
+        # rowData, causing Phase 1 to detect prefix-matched rows as "changed back"
+        # and queue spurious reverts that inflate the count each cycle.
+        st.session_state[f"_skip_p1_{bank}"] = True
 
     _cat_renderer = JsCode("""
 class PermanentSelectRenderer {
@@ -691,7 +696,8 @@ class PermanentSelectRenderer {
 
     _opened_dialog = False
 
-    if not _phase2_ran and not _do_refresh:
+    _skip_p1 = st.session_state.pop(f"_skip_p1_{bank}", False)
+    if not _phase2_ran and not _do_refresh and not _skip_p1:
         # Phase 1: detect VALUE_CHANGED events. Align by tx_id (not by position) so
         # this is safe when display grows after a file upload while the grid still
         # holds the old row count in resp["data"].
