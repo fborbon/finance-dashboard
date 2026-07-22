@@ -514,7 +514,7 @@ def render_movements(bank_df: pd.DataFrame, bank: str):
         )
     with _btn2_col:
         if st.button(t("refresh_btn"), key=f"refresh_btn_{bank}", use_container_width=True):
-            st.session_state[f"_refresh_{bank}"] = True
+            st.session_state[f"_gen_{bank}"] = st.session_state.get(f"_gen_{bank}", 0) + 1
             st.rerun()
 
     display = bank_df[["date", "concept", "amount", "balance", "category", "tx_id"]].copy()
@@ -535,10 +535,9 @@ def render_movements(bank_df: pd.DataFrame, bank: str):
     # _grid_cats tracks what the grid visually shows, keyed by gen so it auto-resets on
     # any intended remount (undo/redo, new category dialog). This prevents false-positive
     # change detection for apply-all rows that were saved but not pushed to the grid.
-    _do_refresh = st.session_state.pop(f"_refresh_{bank}", False)
     _gen = st.session_state.get(f"_gen_{bank}", 0)
     _gc_key = f"_grid_cats_{bank}_{_gen}"
-    if _gc_key not in st.session_state or _do_refresh:
+    if _gc_key not in st.session_state:
         st.session_state[_gc_key] = dict(zip(display["tx_id"], display["category"]))
     _grid_cats = st.session_state[_gc_key]
 
@@ -569,12 +568,10 @@ def render_movements(bank_df: pd.DataFrame, bank: str):
         display = display.reset_index(drop=True)
         st.session_state[_gc_key] = dict(zip(display["tx_id"], display["category"]))
         _grid_cats = st.session_state[_gc_key]
-        _do_refresh = True  # trigger setRowData() — AG Grid re-applies filter model
-        # Guard against stale resp["data"] in the rerun immediately after reload:
-        # AgGrid can send pre-setRowData state before the browser applies the new
-        # rowData, causing Phase 1 to detect prefix-matched rows as "changed back"
-        # and queue spurious reverts that inflate the count each cycle.
-        st.session_state[f"_skip_p1_{bank}"] = True
+        # Bump gen so the next rerun mounts a fresh grid with updated data.
+        # reload_data was removed from this version of streamlit-aggrid.
+        st.session_state[f"_gen_{bank}"] = _gen + 1
+        st.rerun()
 
     _cat_renderer = JsCode("""
 class PermanentSelectRenderer {
@@ -650,7 +647,6 @@ class PermanentSelectRenderer {
         data_return_mode=DataReturnMode.AS_INPUT,
         theme="alpine",
         key=_grid_key,
-        reload_data=_do_refresh,
         allow_unsafe_jscode=True,
     )
 
@@ -696,8 +692,7 @@ class PermanentSelectRenderer {
 
     _opened_dialog = False
 
-    _skip_p1 = st.session_state.pop(f"_skip_p1_{bank}", False)
-    if not _phase2_ran and not _do_refresh and not _skip_p1:
+    if not _phase2_ran:
         # Phase 1: detect VALUE_CHANGED events. Align by tx_id (not by position) so
         # this is safe when display grows after a file upload while the grid still
         # holds the old row count in resp["data"].
