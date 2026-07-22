@@ -462,11 +462,9 @@ def _new_cat_dialog_body():
         if _name not in [c.lower() for c in st.session_state.categories]:
             st.session_state.categories = sorted(st.session_state.categories + [_name])
             save_categories(st.session_state.categories)
-        for tid in pending_ids:
-            st.session_state.overrides[tid] = _name
-        total_matched = 0
+        matched_tids = {tid: _name for tid in pending_ids}
         if apply_all:
-            _bank_full = df[df["bank"] == bank]  # all dates, this bank only
+            _bank_full = df[df["bank"] == bank]
             for concept in concepts:
                 prefix = _concept_prefix(concept)
                 if prefix:
@@ -474,15 +472,17 @@ def _new_cat_dialog_body():
                         _bank_full["concept"].str.strip().str.lower().str.startswith(prefix)
                     ]
                     for _, mrow in matches.iterrows():
-                        st.session_state.overrides[mrow["tx_id"]] = _name
-                    total_matched += len(matches)
+                        matched_tids[mrow["tx_id"]] = _name
+        for tid, cat in matched_tids.items():
+            st.session_state.overrides[tid] = cat
+        total_matched = len(matched_tids)
         _push_history()
         save_overrides(st.session_state.overrides)
         st.session_state.pop(f"_pending_new_cat_{bank}", None)
         st.session_state.pop(f"_pending_concepts_{bank}", None)
         st.session_state.pop(f"_pending_apply_all_{bank}", None)
         st.toast(t("new_cat_added", name=_name), icon="✅")
-        if apply_all and total_matched > 0:
+        if apply_all and total_matched > len(pending_ids):
             st.toast(t("apply_all_toast", n=total_matched), icon="✅")
         st.session_state[f"_gen_{bank}"] = st.session_state.get(f"_gen_{bank}", 0) + 1
         st.rerun()
