@@ -553,6 +553,9 @@ def render_movements(bank_df: pd.DataFrame, bank: str):
         save_overrides(st.session_state.overrides)
         if _queued.get("total_matched", 0) > _queued["n_rows"]:
             st.toast(t("apply_all_toast", n=_queued["total_matched"]), icon="✅")
+            # Auto-uncheck apply-all after a bulk application so it must be
+            # re-enabled deliberately before the next change.
+            st.session_state[f"apply_all_{bank}"] = False
         # Rebuild display from fresh overrides so setRowData() sends correct categories
         # (including apply-all rows) and the AG Grid filter model is re-applied correctly.
         _fresh = apply_overrides(get_raw_data(), st.session_state.overrides)
@@ -710,7 +713,6 @@ class PermanentSelectRenderer {
 
             if real_changes.any():
                 pending_changes = {}
-                total_matched = 0
                 _bank_full = df[df["bank"] == bank]  # all dates, this bank only
                 for idx in display.index[real_changes]:
                     new_cat = _shown.loc[idx]
@@ -726,10 +728,13 @@ class PermanentSelectRenderer {
                             ]
                             for _, mrow in matches.iterrows():
                                 pending_changes[mrow["tx_id"]] = new_cat
-                            total_matched += len(matches)
+                n_direct = int(real_changes.sum())
+                # total_matched = unique rows affected (pending_changes deduplicates
+                # overlapping prefix matches across multiple simultaneously changed rows)
+                total_matched = len(pending_changes)
                 st.session_state[f"_queued_changes_{bank}"] = {
                     "changes":       pending_changes,
-                    "n_rows":        int(real_changes.sum()),
+                    "n_rows":        n_direct,
                     "total_matched": total_matched,
                 }
                 st.rerun()
