@@ -504,6 +504,11 @@ def render_movements(bank_df: pd.DataFrame, bank: str):
     SENTINEL = t("add_cat_sentinel")
     cats = st.session_state.categories
 
+    # Consume uncheck flag BEFORE the widget is instantiated (Streamlit forbids
+    # setting widget-keyed session state after the widget renders in the same run).
+    if st.session_state.pop(f"_uncheck_apply_all_{bank}", False):
+        st.session_state[f"apply_all_{bank}"] = False
+
     _ck2_col, _btn2_col = st.columns([4, 1])
     with _ck2_col:
         apply_all = st.checkbox(
@@ -553,9 +558,6 @@ def render_movements(bank_df: pd.DataFrame, bank: str):
         save_overrides(st.session_state.overrides)
         if _queued.get("total_matched", 0) > _queued["n_rows"]:
             st.toast(t("apply_all_toast", n=_queued["total_matched"]), icon="✅")
-            # Auto-uncheck apply-all after a bulk application so it must be
-            # re-enabled deliberately before the next change.
-            st.session_state[f"apply_all_{bank}"] = False
         # Rebuild display from fresh overrides so setRowData() sends correct categories
         # (including apply-all rows) and the AG Grid filter model is re-applied correctly.
         _fresh = apply_overrides(get_raw_data(), st.session_state.overrides)
@@ -732,6 +734,8 @@ class PermanentSelectRenderer {
                 # total_matched = unique rows affected (pending_changes deduplicates
                 # overlapping prefix matches across multiple simultaneously changed rows)
                 total_matched = len(pending_changes)
+                if apply_all and total_matched > n_direct:
+                    st.session_state[f"_uncheck_apply_all_{bank}"] = True
                 st.session_state[f"_queued_changes_{bank}"] = {
                     "changes":       pending_changes,
                     "n_rows":        n_direct,
