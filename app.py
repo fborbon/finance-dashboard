@@ -568,10 +568,9 @@ def render_movements(bank_df: pd.DataFrame, bank: str):
         display = display.reset_index(drop=True)
         st.session_state[_gc_key] = dict(zip(display["tx_id"], display["category"]))
         _grid_cats = st.session_state[_gc_key]
-        # Bump gen so the next rerun mounts a fresh grid with updated data.
-        # reload_data was removed from this version of streamlit-aggrid.
+        # Bump gen so AgGrid renders with a new key this same rerun, forcing a
+        # clean remount. reload_data was removed from this version of streamlit-aggrid.
         st.session_state[f"_gen_{bank}"] = _gen + 1
-        st.rerun()
 
     _cat_renderer = JsCode("""
 class PermanentSelectRenderer {
