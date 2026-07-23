@@ -6,7 +6,6 @@ from pathlib import Path
 import pandas as pd
 import plotly.express as px
 import streamlit as st
-from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, DataReturnMode, JsCode
 from data_loader import load_all
 
 
@@ -60,6 +59,8 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "filters": "Filtros",
         "date_range": "Rango de fechas",
         "hide_transfers": "Ocultar transferencias entre cuentas propias",
+        "category_filter_label": "Categorías",
+        "category_filter_help": "Desmarca categorías para excluirlas de tablas y gráficos.",
         "language_btn": "🇬🇧 English",
         # top-level tabs
         "tab_overview": "📊 Resumen",
@@ -84,7 +85,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "income_by_cat_year": "Ingresos por categoría y año",
         # charts
         "balance_over_time_bank": "Balance a lo largo del tiempo",
-        "expenses_by_cat": "Gastos por categoría",
+        "expenses_by_cat": "Movimientos por categoría",
         "no_expenses": "Sin gastos en este período.",
         "monthly_cash_flow": "Flujo de caja mensual",
         "hist_totals":   "Acumulado histórico por categoría",
@@ -138,12 +139,18 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "bulk_cat_label":   "Categoría para selección",
         "auto_classified":  "✅ {n} fila(s) categorizadas automáticamente.",
         "filter_all":       "(Todas las categorías)",
+        "filter_concept_ph": "🔍 Buscar concepto…",
+        "filter_cat_ph":     "Filtrar categoría…",
+        "sort_by_label":     "Ordenar por",
+        "sort_asc_help":     "Alternar orden ascendente/descendente",
     },
     "en": {
         "page_title": "💳 Bank Dashboard",
         "filters": "Filters",
         "date_range": "Date range",
         "hide_transfers": "Hide own inter-bank transfers",
+        "category_filter_label": "Categories",
+        "category_filter_help": "Uncheck categories to exclude them from tables and charts.",
         "language_btn": "🇪🇸 Español",
         "tab_overview": "📊 Overview",
         "tab_categories": "⚙️ Categories",
@@ -212,6 +219,10 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "bulk_cat_label":   "Category for selection",
         "auto_classified":  "✅ {n} row(s) auto-classified.",
         "filter_all":       "(All categories)",
+        "filter_concept_ph": "🔍 Search concept…",
+        "filter_cat_ph":     "Filter category…",
+        "sort_by_label":     "Sort by",
+        "sort_asc_help":     "Toggle ascending/descending order",
     },
 }
 
@@ -339,16 +350,18 @@ def tx_id(bank: str, date, concept: str, amount: float) -> str:
 
 @st.cache_data
 def get_raw_data() -> pd.DataFrame:
-    return load_all()
-
-
-def apply_overrides(raw: pd.DataFrame, overrides: dict) -> pd.DataFrame:
-    df = raw.copy()
+    df = load_all()
+    # Pre-compute tx_id once so apply_overrides can use a fast map() instead of a loop.
     df["tx_id"] = df.apply(
         lambda r: tx_id(r["bank"], r["date"], r["concept"], r["amount"]), axis=1
     )
-    for tid, cat in overrides.items():
-        df.loc[df["tx_id"] == tid, "category"] = cat
+    return df
+
+
+def apply_overrides(raw: pd.DataFrame, overrides: dict) -> pd.DataFrame:
+    df = raw.copy()  # tx_id column is already present from get_raw_data()
+    if overrides:
+        df["category"] = df["tx_id"].map(overrides).fillna(df["category"])
     df["category"] = df["category"].fillna("other").replace("accommodation", "other")
     return df
 
@@ -376,15 +389,57 @@ raw_df = get_raw_data()
 df = apply_overrides(raw_df, st.session_state.overrides)
 all_banks = sorted(df["bank"].unique())
 
+
+# ── Keep the user on their current bank tab across our internal st.rerun()s ────
+# st.tabs() has no way to set the active tab from Python, and st.rerun() resets
+# it to the first tab. We remember which bank tab triggered the rerun and click
+# it back into place client-side once the tab bar has been rendered again.
+def _mark_active_bank(bank: str):
+    st.session_state["_restore_tab"] = f"🏦 {bank}"
+
+
+def _restore_active_tab():
+    label = st.session_state.pop("_restore_tab", None)
+    if not label:
+        return
+    st.components.v1.html(f"""
+        <script>
+        (function() {{
+            const target = {json.dumps(label)};
+            function clickTab() {{
+                const doc = window.parent.document;
+                const buttons = doc.querySelectorAll('button[role="tab"]');
+                for (const btn of buttons) {{
+                    if (btn.innerText.trim() === target) {{
+                        btn.click();
+                        return true;
+                    }}
+                }}
+                return false;
+            }}
+            if (!clickTab()) {{ setTimeout(clickTab, 100); }}
+        }})();
+        </script>
+    """, height=0)
+
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 
 st.sidebar.header(t("filters"))
-date_min = df["date"].min().date()
-date_max = df["date"].max().date()
-date_range = st.sidebar.date_input(t("date_range"), value=[date_min, date_max])
-start_date = date_range[0] if len(date_range) > 0 else date_min
-end_date = date_range[1] if len(date_range) > 1 else date_max
+start_date = df["date"].min().date()
+end_date = df["date"].max().date()
 hide_transfers = st.sidebar.checkbox(t("hide_transfers"), value=False)
+
+st.session_state.setdefault("cat_filter_sidebar", st.session_state.categories.copy())
+# Drop any categories from the saved selection that no longer exist.
+st.session_state["cat_filter_sidebar"] = [
+    c for c in st.session_state["cat_filter_sidebar"] if c in st.session_state.categories
+]
+active_categories = st.sidebar.multiselect(
+    t("category_filter_label"),
+    options=st.session_state.categories,
+    key="cat_filter_sidebar",
+    help=t("category_filter_help"),
+)
 
 st.sidebar.divider()
 if st.sidebar.button(t("language_btn"), use_container_width=True):
@@ -406,7 +461,7 @@ with _ub:
         st.session_state.overrides = st.session_state._ov_history.pop()
         save_overrides(st.session_state.overrides)
         for _b in all_banks:
-            st.session_state[f"_gen_{_b}"] = st.session_state.get(f"_gen_{_b}", 0) + 1
+            st.session_state.pop(f"editor_{_b}", None)
         st.rerun()
 with _rb:
     if st.button(
@@ -419,7 +474,7 @@ with _rb:
         st.session_state.overrides = st.session_state._ov_redo.pop()
         save_overrides(st.session_state.overrides)
         for _b in all_banks:
-            st.session_state[f"_gen_{_b}"] = st.session_state.get(f"_gen_{_b}", 0) + 1
+            st.session_state.pop(f"editor_{_b}", None)
         st.rerun()
 
 
@@ -427,6 +482,7 @@ def apply_filters(source: pd.DataFrame) -> pd.DataFrame:
     mask = (source["date"].dt.date >= start_date) & (source["date"].dt.date <= end_date)
     if hide_transfers:
         mask &= ~source["category"].isin(TRANSFER_CATS)
+    mask &= source["category"].isin(active_categories)
     return source[mask].copy()
 
 
@@ -455,6 +511,7 @@ def _new_cat_dialog_body():
         st.session_state.pop(f"_pending_new_cat_{bank}", None)
         st.session_state.pop(f"_pending_concepts_{bank}", None)
         st.session_state.pop(f"_pending_apply_all_{bank}", None)
+        _mark_active_bank(bank)
         st.rerun()
 
     if add_ok and new_name.strip():
@@ -484,7 +541,8 @@ def _new_cat_dialog_body():
         st.toast(t("new_cat_added", name=_name), icon="✅")
         if apply_all and total_matched > len(pending_ids):
             st.toast(t("apply_all_toast", n=total_matched), icon="✅")
-        st.session_state[f"_gen_{bank}"] = st.session_state.get(f"_gen_{bank}", 0) + 1
+        st.session_state.pop(f"editor_{bank}", None)
+        _mark_active_bank(bank)
         st.rerun()
 
 
@@ -503,28 +561,43 @@ def _new_cat_dialog_en():
 def render_movements(bank_df: pd.DataFrame, bank: str):
     SENTINEL = t("add_cat_sentinel")
     cats = st.session_state.categories
+    _valid_cats = set(cats)
 
-    _ck2_col, _btn2_col = st.columns([4, 1])
-    with _ck2_col:
+    # ── Controls ──────────────────────────────────────────────────────────────
+    _ck_col, _btn_col = st.columns([4, 1])
+    with _ck_col:
         apply_all = st.checkbox(
             t("apply_all_checkbox"),
             key=f"apply_all_{bank}",
             help=t("apply_all_help"),
             value=False,
         )
-    with _btn2_col:
+    with _btn_col:
         if st.button(t("refresh_btn"), key=f"refresh_btn_{bank}", use_container_width=True):
-            st.session_state[f"_gen_{bank}"] = st.session_state.get(f"_gen_{bank}", 0) + 1
+            st.session_state.pop(f"editor_{bank}", None)
+            _mark_active_bank(bank)
             st.rerun()
 
+    # ── Search / filter row — boxes aligned above their matching table column ──
+    _col_date, _col_concept, _col_amount, _col_balance, _col_category = st.columns(
+        [1, 2.5, 1, 1, 1.5]
+    )
+    with _col_concept:
+        _q_concept = st.text_input(
+            "concept_search", key=f"q_concept_{bank}",
+            placeholder=t("filter_concept_ph"), label_visibility="collapsed",
+        )
+    with _col_category:
+        _q_cats = st.multiselect(
+            "cat_filter", options=cats, key=f"q_cats_{bank}",
+            placeholder=t("filter_cat_ph"), label_visibility="collapsed",
+        )
+
+    # ── Build display ─────────────────────────────────────────────────────────
     display = bank_df[["date", "concept", "amount", "balance", "category", "tx_id"]].copy()
     display["date"]     = display["date"].dt.strftime("%Y-%m-%d")
     display["amount"]   = display["amount"].round(2)
     display["balance"]  = display["balance"].round(2)
-    # Normalize: any category not in the user's list falls back to "other" so the
-    # renderer always has a valid option to select (avoids browser defaulting to
-    # the first option — "accommodation" — when the value is unrecognised).
-    _valid_cats = set(cats)
     display["category"] = (
         display["category"]
         .fillna("other")
@@ -532,218 +605,116 @@ def render_movements(bank_df: pd.DataFrame, bank: str):
     )
     display = display.reset_index(drop=True)
 
-    # _grid_cats tracks what the grid visually shows, keyed by gen so it auto-resets on
-    # any intended remount (undo/redo, new category dialog). This prevents false-positive
-    # change detection for apply-all rows that were saved but not pushed to the grid.
-    _gen = st.session_state.get(f"_gen_{bank}", 0)
-    _gc_key = f"_grid_cats_{bank}_{_gen}"
-    if _gc_key not in st.session_state:
-        st.session_state[_gc_key] = dict(zip(display["tx_id"], display["category"]))
-    _grid_cats = st.session_state[_gc_key]
+    # ── Apply search filters ──────────────────────────────────────────────────
+    mask = pd.Series(True, index=display.index)
+    if _q_concept:
+        mask &= display["concept"].str.contains(_q_concept, case=False, na=False, regex=False)
+    if _q_cats:
+        mask &= display["category"].isin(_q_cats)
 
-    # ── Phase 2: apply queued changes (runs before grid renders so spinner is visible) ──
-    _phase2_ran = False
-    _queued = st.session_state.pop(f"_queued_changes_{bank}", None)
-    if _queued:
-        _phase2_ran = True
-        for tid, cat in _queued["changes"].items():
+    display_view = display[mask].reset_index(drop=True)
+
+    # Reset editor state when filter changes so row-index mapping stays valid
+    _fsig = f"{_q_concept}|{'|'.join(sorted(_q_cats))}"
+    if st.session_state.get(f"_fsig_{bank}") != _fsig:
+        st.session_state[f"_fsig_{bank}"] = _fsig
+        st.session_state.pop(f"editor_{bank}", None)
+
+    # ── Data editor ───────────────────────────────────────────────────────────
+    editor_input = display_view.drop(columns=["tx_id"]).copy()
+    editor_input.insert(0, "selected", False)
+
+    edited = st.data_editor(
+        editor_input,
+        column_config={
+            "selected": st.column_config.CheckboxColumn("☑", default=False, width="small"),
+            "date":     st.column_config.TextColumn(t("col_date"),      disabled=True, width="small"),
+            "concept":  st.column_config.TextColumn(t("col_concept"),   disabled=True, width="large"),
+            "amount":   st.column_config.NumberColumn(t("col_amount"),  disabled=True, format="%.2f", width="small"),
+            "balance":  st.column_config.NumberColumn(t("col_balance"), disabled=True, format="%.2f", width="small"),
+            "category": st.column_config.SelectboxColumn(
+                t("col_category"), options=cats + [SENTINEL], required=True, width="medium"
+            ),
+        },
+        hide_index=True,
+        use_container_width=True,
+        height=520,
+        key=f"editor_{bank}",
+    )
+
+    # ── Bulk selection: apply one category to every checked row ────────────────
+    n_selected = int(edited["selected"].sum())
+    _bulk_col, _bulk_btn = st.columns([3, 1])
+    with _bulk_col:
+        bulk_cat = st.selectbox(
+            t("bulk_cat_label"), options=cats, key=f"bulk_cat_{bank}",
+            label_visibility="collapsed", placeholder=t("bulk_cat_label"),
+        )
+    with _bulk_btn:
+        bulk_clicked = st.button(
+            t("bulk_apply_btn"), key=f"bulk_apply_{bank}",
+            use_container_width=True, disabled=n_selected == 0,
+        )
+    st.caption(t("rows_selected", n=n_selected))
+
+    if bulk_clicked and n_selected > 0:
+        sel_idx = edited.index[edited["selected"]]
+        for idx in sel_idx:
+            tid = display_view.loc[idx, "tx_id"]
+            st.session_state.overrides[tid] = bulk_cat
+        _push_history()
+        save_overrides(st.session_state.overrides)
+        st.toast(t("bulk_applied", cat=bulk_cat, n=len(sel_idx)), icon="✅")
+        st.session_state.pop(f"editor_{bank}", None)
+        _mark_active_bank(bank)
+        st.rerun()
+
+    # ── Detect and save changes ───────────────────────────────────────────────
+    changed      = edited["category"] != display_view["category"]
+    sentinel_sel = changed & (edited["category"] == SENTINEL)
+    real_changes = changed & ~sentinel_sel
+
+    if real_changes.any():
+        _bank_full = df[df["bank"] == bank]
+        pending = {}
+        for idx in display_view.index[real_changes]:
+            new_cat = edited.loc[idx, "category"]
+            tid     = display_view.loc[idx, "tx_id"]
+            pending[tid] = new_cat
+            if apply_all:
+                prefix = _concept_prefix(display_view.loc[idx, "concept"])
+                if prefix:
+                    matches = _bank_full[
+                        _bank_full["concept"].str.strip().str.lower().str.startswith(prefix)
+                    ]
+                    for _, mrow in matches.iterrows():
+                        pending[mrow["tx_id"]] = new_cat
+        for tid, cat in pending.items():
             st.session_state.overrides[tid] = cat
         _push_history()
         save_overrides(st.session_state.overrides)
-        if _queued.get("total_matched", 0) > _queued["n_rows"]:
-            st.toast(t("apply_all_toast", n=_queued["total_matched"]), icon="✅")
-        # Rebuild display from fresh overrides so setRowData() sends correct categories
-        # (including apply-all rows) and the AG Grid filter model is re-applied correctly.
-        _fresh = apply_overrides(get_raw_data(), st.session_state.overrides)
-        _fresh = apply_filters(_fresh[_fresh["bank"] == bank])
-        display = _fresh[["date", "concept", "amount", "balance", "category", "tx_id"]].copy()
-        display["date"]     = display["date"].dt.strftime("%Y-%m-%d")
-        display["amount"]   = display["amount"].round(2)
-        display["balance"]  = display["balance"].round(2)
-        display["category"] = (
-            display["category"]
-            .fillna("other")
-            .where(display["category"].isin(_valid_cats), "other")
-        )
-        display = display.reset_index(drop=True)
-        st.session_state[_gc_key] = dict(zip(display["tx_id"], display["category"]))
-        _grid_cats = st.session_state[_gc_key]
-        # Bump gen so AgGrid renders with a new key this same rerun, forcing a
-        # clean remount. reload_data was removed from this version of streamlit-aggrid.
-        st.session_state[f"_gen_{bank}"] = _gen + 1
+        n_direct = int(real_changes.sum())
+        if apply_all and len(pending) > n_direct:
+            st.toast(t("apply_all_toast", n=len(pending)), icon="✅")
+        st.session_state.pop(f"editor_{bank}", None)
+        _mark_active_bank(bank)
+        st.rerun()
 
-    _cat_renderer = JsCode("""
-class PermanentSelectRenderer {
-    init(p) {
-        this._t = null;
-        this.el = document.createElement('select');
-        this.el.style.cssText =
-            'width:100%;height:100%;border:none;background:transparent;' +
-            'cursor:pointer;font-size:inherit;color:inherit;';
-        const _opts = p.colDef.cellRendererParams.values || [];
-        const _raw  = p.value || '';
-        const _val  = _opts.indexOf(_raw) >= 0 ? _raw : 'other';
-        _opts.forEach(v => {
-            const o = document.createElement('option');
-            o.value = v; o.text = v;
-            if (v === _val) o.selected = true;
-            this.el.appendChild(o);
-        });
-        this.el.addEventListener('change', e => {
-            const chosen = e.target.value;
-            clearTimeout(this._t);
-            this.el.style.outline = '2px solid orange';
-            this._t = setTimeout(() => {
-                this.el.style.outline = '';
-                p.setValue(chosen);
-            }, 1000);
-        });
-    }
-    getGui()     { return this.el; }
-    refresh(p)   {
-        const _opts = p.colDef.cellRendererParams.values || [];
-        const _raw  = p.value || '';
-        this.el.value = _opts.indexOf(_raw) >= 0 ? _raw : 'other';
-        return true;
-    }
-    destroy()    { clearTimeout(this._t); }
-}
-""")
-
-    gb = GridOptionsBuilder.from_dataframe(display)
-    gb.configure_default_column(floatingFilter=True, filter=True, sortable=True, resizable=True)
-    gb.configure_selection(
-        selection_mode="multiple",
-        use_checkbox=True,
-        suppressRowClickSelection=True,
-    )
-    gb.configure_column("tx_id",   hide=True)
-    gb.configure_column("date",    headerName=t("col_date"),    editable=False, width=130,
-                        filter="agDateColumnFilter",
-                        checkboxSelection=True,
-                        headerCheckboxSelection=True,
-                        headerCheckboxSelectionFilteredOnly=True)
-    gb.configure_column("concept", headerName=t("col_concept"), editable=False, flex=2,
-                        filter="agTextColumnFilter")
-    gb.configure_column("amount",  headerName=t("col_amount"),  editable=False, width=130,
-                        type=["numericColumn", "rightAligned"], filter="agNumberColumnFilter")
-    gb.configure_column("balance", headerName=t("col_balance"), editable=False, width=130,
-                        type=["numericColumn", "rightAligned"], filter="agNumberColumnFilter")
-    gb.configure_column("category",
-        headerName=t("col_category"), editable=False, width=200,
-        cellRenderer=_cat_renderer,
-        cellRendererParams={"values": cats + [SENTINEL]},
-        filter="agTextColumnFilter",
-    )
-    gb.configure_grid_options(suppressScrollOnNewData=True, enableCellTextSelection=True)
-
-    _grid_key = f"aggrid_{bank}_{st.session_state.get(f'_gen_{bank}', 0)}"
-    resp = AgGrid(
-        display,
-        gridOptions=gb.build(),
-        height=600,
-        update_mode=GridUpdateMode.VALUE_CHANGED | GridUpdateMode.SELECTION_CHANGED,
-        data_return_mode=DataReturnMode.AS_INPUT,
-        theme="alpine",
-        key=_grid_key,
-        allow_unsafe_jscode=True,
-    )
-
-    # ── Auto-save on every value change (no button needed) ───────────────────
-    def _open_dialog(tx_ids, concepts):
-        st.session_state[f"_pending_new_cat_{bank}"] = tx_ids
-        st.session_state[f"_pending_concepts_{bank}"] = concepts
+    if sentinel_sel.any():
+        st.session_state[f"_pending_new_cat_{bank}"] = [
+            display_view.loc[idx, "tx_id"] for idx in display_view.index[sentinel_sel]
+        ]
+        st.session_state[f"_pending_concepts_{bank}"] = [
+            display_view.loc[idx, "concept"] for idx in display_view.index[sentinel_sel]
+        ]
         st.session_state[f"_pending_apply_all_{bank}"] = apply_all
         st.session_state["_dialog_bank"] = bank
+        st.session_state.pop(f"editor_{bank}", None)
         if st.session_state.get("lang", "es") == "es":
             _new_cat_dialog_es()
         else:
             _new_cat_dialog_en()
-
-    # ── Bulk selection apply ─────────────────────────────────────────────────────
-    _raw_sel = resp["selected_rows"]
-    _sel_df  = _raw_sel if isinstance(_raw_sel, pd.DataFrame) else (
-                   pd.DataFrame(_raw_sel) if _raw_sel else pd.DataFrame()
-               )
-    n_selected = len(_sel_df)
-
-    if n_selected > 0:
-        _sel_col, _cat_col, _btn_col = st.columns([2, 3, 2])
-        with _sel_col:
-            st.info(t("rows_selected", n=n_selected))
-        with _cat_col:
-            _bulk_cat = st.selectbox(
-                t("bulk_cat_label"),
-                options=cats,
-                key=f"bulk_cat_{bank}",
-                label_visibility="collapsed",
-            )
-        with _btn_col:
-            if st.button(t("bulk_apply_btn"), key=f"bulk_apply_{bank}", use_container_width=True, type="primary"):
-                _bulk_ids = list(_sel_df["tx_id"]) if "tx_id" in _sel_df.columns else []
-                if _bulk_ids:
-                    st.session_state[f"_queued_changes_{bank}"] = {
-                        "changes":       {tid: _bulk_cat for tid in _bulk_ids},
-                        "n_rows":        len(_bulk_ids),
-                        "total_matched": len(_bulk_ids),
-                    }
-                    st.rerun()
-
-    _opened_dialog = False
-
-    if not _phase2_ran:
-        # Phase 1: detect VALUE_CHANGED events. Align by tx_id (not by position) so
-        # this is safe when display grows after a file upload while the grid still
-        # holds the old row count in resp["data"].
-        edited = pd.DataFrame(resp["data"]).reset_index(drop=True)
-
-        if "category" in edited.columns and "tx_id" in edited.columns and not edited.empty:
-            _edited_by_tid  = dict(zip(edited["tx_id"], edited["category"]))
-            grid_cat_series = display["tx_id"].map(_grid_cats).fillna(display["category"])
-            # What the grid currently shows for each display row; NaN for rows not yet in grid
-            _shown = display["tx_id"].map(_edited_by_tid)
-            # Changed = grid shows something different from what _grid_cats recorded.
-            # New rows (NaN in _shown) are never treated as changed.
-            changed      = _shown.fillna(grid_cat_series).fillna("") != grid_cat_series.fillna("")
-            sentinel_sel = changed & (_shown == SENTINEL)
-            real_changes = changed & ~sentinel_sel
-
-            if real_changes.any():
-                pending_changes = {}
-                _bank_full = df[df["bank"] == bank]  # all dates, this bank only
-                for idx in display.index[real_changes]:
-                    new_cat = _shown.loc[idx]
-                    tid     = display.loc[idx, "tx_id"]
-                    pending_changes[tid] = new_cat
-                    _grid_cats[tid] = new_cat  # track direct change in grid state
-                    if apply_all:
-                        prefix = _concept_prefix(display.loc[idx, "concept"])
-                        if prefix:
-                            matches = _bank_full[
-                                _bank_full["concept"].str.strip().str.lower()
-                                .str.startswith(prefix)
-                            ]
-                            for _, mrow in matches.iterrows():
-                                pending_changes[mrow["tx_id"]] = new_cat
-                n_direct = int(real_changes.sum())
-                # total_matched = unique rows affected (pending_changes deduplicates
-                # overlapping prefix matches across multiple simultaneously changed rows)
-                total_matched = len(pending_changes)
-                st.session_state[f"_queued_changes_{bank}"] = {
-                    "changes":       pending_changes,
-                    "n_rows":        n_direct,
-                    "total_matched": total_matched,
-                }
-                st.rerun()
-
-            if sentinel_sel.any():
-                _opened_dialog = True
-                _open_dialog(
-                    [display.loc[idx, "tx_id"] for idx in display.index[sentinel_sel]],
-                    [display.loc[idx, "concept"] for idx in display.index[sentinel_sel]],
-                )
-
-    if not _opened_dialog and st.session_state.get(f"_pending_new_cat_{bank}"):
+    elif st.session_state.get(f"_pending_new_cat_{bank}"):
         st.session_state.pop(f"_pending_new_cat_{bank}", None)
 
 
@@ -1009,6 +980,7 @@ tab_labels = (
     + [t("tab_categories"), t("tab_settings")]
 )
 tabs = st.tabs(tab_labels)
+_restore_active_tab()
 
 with tabs[0]:
     st.title(t("page_title"))

@@ -24,6 +24,12 @@ if [[ "$RESOLVED" != "54.78.82.101" ]]; then
     warn "  banking.forwardforecasting.eu → 54.78.82.101"
 fi
 
+# ── Snapshot overrides before any sync ───────────────────────────────────────
+
+step "Snapshotting category_overrides.json before deploy"
+$SSH -i "$KEY" "$SERVER" /home/ubuntu/finance-dashboard/backups/backup_overrides.sh
+ok "Snapshot saved to ~/finance-dashboard/backups/overrides/"
+
 # ── Sync code to server ───────────────────────────────────────────────────────
 
 step "Syncing code to server"
@@ -34,6 +40,7 @@ eval "$RSYNC" \
     --exclude ".venv/" \
     --exclude "*.egg-info/" \
     --exclude "category_overrides.json" \
+    --exclude "categories.json" \
     --exclude "docs/" \
     --exclude "deploy/" \
     "$LOCAL_DIR/" "$SERVER:$REMOTE_DIR/"
@@ -88,9 +95,12 @@ else
     ok "htpasswd set for user 'admin'"
 fi
 
-# ── SSL certificate ───────────────────────────────────────────────────────────
+# ── nginx config — only touch if banking.conf does not yet exist on server ────
+# Once SSL is provisioned the config lives on the server; never overwrite it.
 
-if [[ "${1:-}" == "--ssl" ]]; then
+if $SSH -i "$KEY" "$SERVER" test -f /etc/nginx/sites-available/banking.conf; then
+    ok "nginx banking.conf already present on server — skipping (use --reset-nginx to force)"
+elif [[ "${1:-}" == "--ssl" ]]; then
     step "Provisioning SSL certificate with Let's Encrypt"
     $SSH -i "$KEY" "$SERVER" bash <<'REMOTE'
         sudo certbot certonly --nginx \
@@ -102,7 +112,6 @@ if [[ "${1:-}" == "--ssl" ]]; then
 REMOTE
     ok "SSL certificate issued"
 
-    # Deploy full nginx config with SSL
     step "Installing nginx config (with SSL)"
     rsync -az -e "ssh -i $KEY" \
         "$LOCAL_DIR/deploy/nginx-banking.conf" \
@@ -117,8 +126,7 @@ REMOTE
     ok "nginx config active with SSL"
 
 else
-    # Deploy HTTP-only nginx config (for first run before DNS/cert are ready)
-    step "Installing nginx config (HTTP, no SSL yet)"
+    step "Installing nginx config (HTTP, first-time only)"
     $SSH -i "$KEY" "$SERVER" bash <<'REMOTE'
         cat > /tmp/nginx-banking-http.conf <<'EOF'
 server {
@@ -150,7 +158,7 @@ EOF
 REMOTE
     ok "HTTP nginx config active"
     warn "Run with --ssl once DNS is pointing to 54.78.82.101 to enable HTTPS"
-fi
+fi  # end first-time nginx block
 
 # ── Final status ──────────────────────────────────────────────────────────────
 
