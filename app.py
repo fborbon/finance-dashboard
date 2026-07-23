@@ -556,12 +556,58 @@ def _new_cat_dialog_en():
     _new_cat_dialog_body()
 
 
+# ── EXPERIMENTAL: Tabulator.js preview (read-only) ─────────────────────────────
+# No maintained Streamlit<->Tabulator bridge exists on PyPI, so a real editable
+# integration would require writing a full custom bidirectional component (the
+# same category of effort/risk as streamlit-aggrid, which we just moved away
+# from). This is a read-only proof of concept, loaded from CDN client-side via
+# st.components.v1.html, purely to demonstrate the native in-header text-filter
+# UX before committing to that engineering cost.
+def _render_tabulator_poc(bank_df: pd.DataFrame, bank: str, cats: list):
+    poc_df = bank_df[["date", "concept", "amount", "balance", "category"]].copy()
+    poc_df["date"] = poc_df["date"].dt.strftime("%Y-%m-%d")
+    poc_df["amount"] = poc_df["amount"].round(2)
+    poc_df["balance"] = poc_df["balance"].round(2)
+    poc_df["category"] = poc_df["category"].fillna("other").where(poc_df["category"].isin(cats), "other")
+    rows_json = poc_df.to_json(orient="records")
+
+    html = f"""
+    <link href="https://unpkg.com/tabulator-tables@6.3.1/dist/css/tabulator_simple.min.css" rel="stylesheet">
+    <script src="https://unpkg.com/tabulator-tables@6.3.1/dist/js/tabulator.min.js"></script>
+    <div id="tab-poc-{bank}"></div>
+    <script>
+    new Tabulator("#tab-poc-{bank}", {{
+        data: {rows_json},
+        layout: "fitColumns",
+        height: 480,
+        placeholder: "No rows",
+        columns: [
+            {{title: "Fecha",     field: "date",     headerFilter: "input", headerFilterFunc: "like", width: 110}},
+            {{title: "Concepto",  field: "concept",  headerFilter: "input", headerFilterFunc: "like"}},
+            {{title: "Importe",   field: "amount",   headerFilter: "input", headerFilterFunc: "like", hozAlign: "right", width: 110}},
+            {{title: "Saldo",     field: "balance",  hozAlign: "right", width: 110}},
+            {{title: "Categoría", field: "category", headerFilter: "input", headerFilterFunc: "like", width: 150}},
+        ],
+    }});
+    </script>
+    """
+    st.components.v1.html(html, height=520, scrolling=True)
+
+
 # ── Bank subtab: movements table ──────────────────────────────────────────────
 
 def render_movements(bank_df: pd.DataFrame, bank: str):
     SENTINEL = t("add_cat_sentinel")
     cats = st.session_state.categories
     _valid_cats = set(cats)
+
+    with st.expander("🧪 Tabulator preview (experimental, read-only)"):
+        st.caption(
+            "Type directly into the column headers below to filter — that's Tabulator's "
+            "native headerFilter feature. This preview is read-only; category edits here "
+            "are not saved (a real integration needs a custom Streamlit component)."
+        )
+        _render_tabulator_poc(bank_df, bank, cats)
 
     # ── Controls ──────────────────────────────────────────────────────────────
     _ck_col, _btn_col = st.columns([4, 1])
