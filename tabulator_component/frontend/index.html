@@ -108,7 +108,9 @@ function applySummaryLabels() {
   document.getElementById("lblExpense").textContent = summaryLabels.expense || "Expenses";
 }
 
-function renderTable(rows) {
+let lastConfigSig = null;
+
+function buildTable(rows) {
   if (table) {
     table.destroy();
     table = null;
@@ -140,6 +142,25 @@ function renderTable(rows) {
   // defer to let it settle first.
   table.on("dataFiltered", function() { setHeight(); setTimeout(updateSummary, 0); });
   table.on("renderComplete", function() { setHeight(); });
+}
+
+function renderTable(rows) {
+  // Rebuilding the table from scratch on every render (e.g. after a category
+  // save triggers a rerun) wipes any column sort the user applied by
+  // clicking a header, since that's client-side Tabulator state. Only
+  // rebuild when the column config actually changed (new category added,
+  // language switched, etc.); otherwise swap the data in place via
+  // replaceData(), which reapplies the existing sort/filters automatically.
+  const configSig = JSON.stringify({categories, sentinel, colLabels, currency});
+  if (table && configSig === lastConfigSig) {
+    table.replaceData(rows).then(function() {
+      setHeight();
+      updateSummary();
+    });
+    return;
+  }
+  lastConfigSig = configSig;
+  buildTable(rows);
 }
 
 function onRender(args) {
