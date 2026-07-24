@@ -6,16 +6,32 @@
 <script src="https://unpkg.com/tabulator-tables@6.3.1/dist/js/tabulator.min.js"></script>
 <style>
   html, body { margin:0; padding:0; font-family: -apple-system, "Segoe UI", sans-serif; font-size: 14px; }
+  #summary {
+    margin-top: 14px;
+    padding-top: 10px;
+    border-top: 1px solid rgba(128,128,128,0.4);
+    display: flex;
+    gap: 32px;
+    flex-wrap: wrap;
+  }
+  #summary .label { color: #888; font-size: 12px; }
+  #summary .value { font-size: 15px; font-weight: 600; }
 </style>
 </head>
 <body>
 <div id="grid"></div>
+<div id="summary">
+  <div><div class="label" id="lblTotal">Total</div><div class="value" id="sumTotal">–</div></div>
+  <div><div class="label" id="lblMonthly">Monthly avg.</div><div class="value" id="sumMonthly">–</div></div>
+  <div><div class="label" id="lblYearly">Yearly avg.</div><div class="value" id="sumYearly">–</div></div>
+</div>
 <script>
 let table = null;
 let seq = 0;
 let categories = [];
 let sentinel = "";
 let colLabels = {};
+let summaryLabels = {};
 
 function post(msg) {
   msg.isStreamlitMessage = true;
@@ -31,6 +47,37 @@ function setValue(payload) {
 function setHeight() {
   const h = document.documentElement.scrollHeight;
   post({type: "streamlit:setFrameHeight", height: h});
+}
+
+function fmtAmount(n) {
+  return n.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2}) + " €";
+}
+
+function updateSummary() {
+  if (!table) return;
+  const rows = table.getData("active"); // respects header filters
+  let total = 0;
+  const months = new Set();
+  const years = new Set();
+  rows.forEach(function(r) {
+    const amt = parseFloat(r.amount);
+    if (!isNaN(amt)) total += amt;
+    if (r.date && r.date.length >= 7) {
+      months.add(r.date.slice(0, 7));
+      years.add(r.date.slice(0, 4));
+    }
+  });
+  const monthlyAvg = months.size > 0 ? total / months.size : 0;
+  const yearlyAvg = years.size > 0 ? total / years.size : 0;
+  document.getElementById("sumTotal").textContent = fmtAmount(total);
+  document.getElementById("sumMonthly").textContent = fmtAmount(monthlyAvg);
+  document.getElementById("sumYearly").textContent = fmtAmount(yearlyAvg);
+}
+
+function applySummaryLabels() {
+  document.getElementById("lblTotal").textContent = summaryLabels.total || "Total";
+  document.getElementById("lblMonthly").textContent = summaryLabels.monthly || "Monthly avg.";
+  document.getElementById("lblYearly").textContent = summaryLabels.yearly || "Yearly avg.";
 }
 
 function renderTable(rows) {
@@ -59,8 +106,11 @@ function renderTable(rows) {
       },
     ],
   });
-  table.on("tableBuilt", function() { setHeight(); });
-  table.on("dataFiltered", function() { setHeight(); });
+  table.on("tableBuilt", function() { setHeight(); updateSummary(); });
+  // dataFiltered fires slightly before Tabulator's internal active-row set is
+  // updated, so getData("active") inside the handler can read stale data —
+  // defer to let it settle first.
+  table.on("dataFiltered", function() { setHeight(); setTimeout(updateSummary, 0); });
   table.on("renderComplete", function() { setHeight(); });
 }
 
@@ -68,6 +118,8 @@ function onRender(args) {
   categories = args.categories || [];
   sentinel = args.sentinel || "";
   colLabels = args.col_labels || {};
+  summaryLabels = args.summary_labels || {};
+  applySummaryLabels();
   renderTable(args.rows || []);
   setTimeout(setHeight, 250);
 }

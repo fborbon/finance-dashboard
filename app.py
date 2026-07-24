@@ -79,6 +79,9 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "col_amount": "Importe (€)",
         "col_balance": "Saldo (€)",
         "col_category": "Categoría",
+        "summary_total":   "Total",
+        "summary_monthly": "Media mensual",
+        "summary_yearly":  "Media anual",
         # overview
         "metric_income": "📥 Ingresos",
         "metric_expenses": "📤 Gastos",
@@ -163,6 +166,9 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "col_amount": "Amount (€)",
         "col_balance": "Balance (€)",
         "col_category": "Category",
+        "summary_total":   "Total",
+        "summary_monthly": "Monthly avg.",
+        "summary_yearly":  "Yearly avg.",
         "metric_income": "📥 Income",
         "metric_expenses": "📤 Expenses",
         "balance_over_time": "Balance over time",
@@ -595,6 +601,9 @@ def render_movements(bank_df: pd.DataFrame, bank: str):
         col_labels={
             "date": t("col_date"), "concept": t("col_concept"), "amount": t("col_amount"),
             "balance": t("col_balance"), "category": t("col_category"),
+        },
+        summary_labels={
+            "total": t("summary_total"), "monthly": t("summary_monthly"), "yearly": t("summary_yearly"),
         },
         key=f"tabulator_{bank}",
     )
