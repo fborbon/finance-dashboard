@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<link href="https://unpkg.com/tabulator-tables@6.3.1/dist/css/tabulator_simple.min.css" rel="stylesheet">
+<script src="https://unpkg.com/tabulator-tables@6.3.1/dist/js/tabulator.min.js"></script>
+<style>
+  html, body { margin:0; padding:0; font-family: -apple-system, "Segoe UI", sans-serif; font-size: 14px; }
+  #toolbar { display:flex; align-items:center; gap:8px; padding:6px 2px 10px 2px; }
+  #toolbar select, #toolbar button { font-size:13px; padding:4px 8px; border-radius:4px; }
+  #toolbar button { cursor:pointer; }
+  #toolbar button:disabled { cursor:not-allowed; opacity:0.5; }
+  #selcount { color:#888; font-size:13px; }
+</style>
+</head>
+<body>
+<div id="toolbar">
+  <select id="bulkCat"></select>
+  <button id="bulkApply" disabled>Apply to selected</button>
+  <span id="selcount">0 selected</span>
+</div>
+<div id="grid"></div>
+<script>
+let table = null;
+let seq = 0;
+let categories = [];
+let sentinel = "";
+let colLabels = {};
+
+function post(msg) {
+  msg.isStreamlitMessage = true;
+  window.parent.postMessage(msg, "*");
+}
+
+function setValue(payload) {
+  seq += 1;
+  payload.seq = seq;
+  post({type: "streamlit:setComponentValue", value: payload, dataType: "json"});
+}
+
+function setHeight() {
+  const h = document.documentElement.scrollHeight;
+  post({type: "streamlit:setFrameHeight", height: h});
+}
+
+function updateSelCount() {
+  const n = table ? table.getSelectedData().length : 0;
+  document.getElementById("selcount").textContent = n + " selected";
+  document.getElementById("bulkApply").disabled = (n === 0);
+}
+
+function buildBulkSelect() {
+  const sel = document.getElementById("bulkCat");
+  sel.innerHTML = "";
+  categories.concat([sentinel]).forEach(function(c) {
+    const opt = document.createElement("option");
+    opt.value = c;
+    opt.textContent = c;
+    sel.appendChild(opt);
+  });
+}
+
+document.getElementById("bulkApply").addEventListener("click", function() {
+  if (!table) return;
+  const rows = table.getSelectedData();
+  const cat = document.getElementById("bulkCat").value;
+  if (rows.length === 0) return;
+  setValue({kind: "bulk", category: cat, tx_ids: rows.map(function(r) { return r.tx_id; })});
+});
+
+function renderTable(rows) {
+  if (table) {
+    table.destroy();
+    table = null;
+  }
+  table = new Tabulator("#grid", {
+    data: rows,
+    index: "tx_id",
+    layout: "fitColumns",
+    height: 520,
+    placeholder: "No rows",
+    selectableRows: true,
+    columns: [
+      {
+        formatter: "rowSelection", titleFormatter: "rowSelection",
+        hozAlign: "center", headerSort: false, width: 40,
+        cellClick: function(e, cell) { cell.getRow().toggleSelect(); },
+      },
+      {title: colLabels.date || "Date", field: "date", headerFilter: "input", headerFilterFunc: "like", width: 110},
+      {title: colLabels.concept || "Concept", field: "concept", headerFilter: "input", headerFilterFunc: "like"},
+      {title: colLabels.amount || "Amount", field: "amount", headerFilter: "input", headerFilterFunc: "like", hozAlign: "right", width: 110},
+      {title: colLabels.balance || "Balance", field: "balance", hozAlign: "right", width: 110},
+      {
+        title: colLabels.category || "Category", field: "category", width: 170,
+        headerFilter: "input", headerFilterFunc: "like",
+        editor: "list", editorParams: {values: categories.concat([sentinel])},
+        cellEdited: function(cell) {
+          setValue({kind: "edit", tx_id: cell.getRow().getData().tx_id, category: cell.getValue()});
+        },
+      },
+    ],
+  });
+  table.on("tableBuilt", function() { setHeight(); updateSelCount(); });
+  table.on("dataFiltered", function() { setHeight(); });
+  table.on("renderComplete", function() { setHeight(); });
+  table.on("rowSelectionChanged", function() { updateSelCount(); });
+}
+
+function onRender(args) {
+  categories = args.categories || [];
+  sentinel = args.sentinel || "";
+  colLabels = args.col_labels || {};
+  buildBulkSelect();
+  renderTable(args.rows || []);
+  setTimeout(setHeight, 250);
+}
+
+let readyAcked = false;
+
+window.addEventListener("message", function(event) {
+  const msg = event.data;
+  if (!msg || !msg.type) return;
+  if (msg.type === "streamlit:render") {
+    readyAcked = true;
+    onRender(msg.args || {});
+  }
+});
+
+// The parent's per-instance listener may not be attached yet on first paint
+// (it wires up on the iframe's load event, which can fire after our inline
+// script runs), so retry componentReady until the first render arrives.
+const readyTimer = setInterval(function() {
+  if (readyAcked) { clearInterval(readyTimer); return; }
+  post({type: "streamlit:componentReady", apiVersion: 1});
+}, 200);
+post({type: "streamlit:componentReady", apiVersion: 1});
+setHeight();
+</script>
+</body>
+</html>

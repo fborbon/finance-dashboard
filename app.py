@@ -29,6 +29,11 @@ BASE = Path(__file__).parent
 CATEGORIES_FILE = BASE / "categories.json"
 OVERRIDES_FILE = BASE / "category_overrides.json"
 
+_tabulator_editor = st.components.v1.declare_component(
+    "tabulator_editor",
+    path=str(BASE / "tabulator_component" / "frontend"),
+)
+
 BANK_COLORS = {
     "Bank1": "#1f77b4", "Bank2": "#ff7f0e", "Bank3": "#9467bd",
     "Rural": "#1f77b4", "Caixa": "#ff7f0e", "Revo": "#9467bd",
@@ -460,8 +465,6 @@ with _ub:
         st.session_state._ov_redo.append(st.session_state.overrides.copy())
         st.session_state.overrides = st.session_state._ov_history.pop()
         save_overrides(st.session_state.overrides)
-        for _b in all_banks:
-            st.session_state.pop(f"editor_{_b}", None)
         st.rerun()
 with _rb:
     if st.button(
@@ -473,8 +476,6 @@ with _rb:
         st.session_state._ov_history.append(st.session_state.overrides.copy())
         st.session_state.overrides = st.session_state._ov_redo.pop()
         save_overrides(st.session_state.overrides)
-        for _b in all_banks:
-            st.session_state.pop(f"editor_{_b}", None)
         st.rerun()
 
 
@@ -541,7 +542,6 @@ def _new_cat_dialog_body():
         st.toast(t("new_cat_added", name=_name), icon="✅")
         if apply_all and total_matched > len(pending_ids):
             st.toast(t("apply_all_toast", n=total_matched), icon="✅")
-        st.session_state.pop(f"editor_{bank}", None)
         _mark_active_bank(bank)
         st.rerun()
 
@@ -556,58 +556,30 @@ def _new_cat_dialog_en():
     _new_cat_dialog_body()
 
 
-# ── EXPERIMENTAL: Tabulator.js preview (read-only) ─────────────────────────────
-# No maintained Streamlit<->Tabulator bridge exists on PyPI, so a real editable
-# integration would require writing a full custom bidirectional component (the
-# same category of effort/risk as streamlit-aggrid, which we just moved away
-# from). This is a read-only proof of concept, loaded from CDN client-side via
-# st.components.v1.html, purely to demonstrate the native in-header text-filter
-# UX before committing to that engineering cost.
-def _render_tabulator_poc(bank_df: pd.DataFrame, bank: str, cats: list):
-    poc_df = bank_df[["date", "concept", "amount", "balance", "category"]].copy()
-    poc_df["date"] = poc_df["date"].dt.strftime("%Y-%m-%d")
-    poc_df["amount"] = poc_df["amount"].round(2)
-    poc_df["balance"] = poc_df["balance"].round(2)
-    poc_df["category"] = poc_df["category"].fillna("other").where(poc_df["category"].isin(cats), "other")
-    rows_json = poc_df.to_json(orient="records")
-
-    html = f"""
-    <link href="https://unpkg.com/tabulator-tables@6.3.1/dist/css/tabulator_simple.min.css" rel="stylesheet">
-    <script src="https://unpkg.com/tabulator-tables@6.3.1/dist/js/tabulator.min.js"></script>
-    <div id="tab-poc-{bank}"></div>
-    <script>
-    new Tabulator("#tab-poc-{bank}", {{
-        data: {rows_json},
-        layout: "fitColumns",
-        height: 480,
-        placeholder: "No rows",
-        columns: [
-            {{title: "Fecha",     field: "date",     headerFilter: "input", headerFilterFunc: "like", width: 110}},
-            {{title: "Concepto",  field: "concept",  headerFilter: "input", headerFilterFunc: "like"}},
-            {{title: "Importe",   field: "amount",   headerFilter: "input", headerFilterFunc: "like", hozAlign: "right", width: 110}},
-            {{title: "Saldo",     field: "balance",  hozAlign: "right", width: 110}},
-            {{title: "Categoría", field: "category", headerFilter: "input", headerFilterFunc: "like", width: 150}},
-        ],
-    }});
-    </script>
-    """
-    st.components.v1.html(html, height=520, scrolling=True)
-
-
 # ── Bank subtab: movements table ──────────────────────────────────────────────
+# Custom Streamlit component (tabulator_component/frontend) wrapping Tabulator.js.
+# Filtering and sorting are entirely client-side (Tabulator's native headerFilter/
+# header-click sort, no Python round-trip). Category edits and bulk-apply are sent
+# back via a raw postMessage payload {kind, ..., seq}; each interaction bumps seq
+# so we can tell a genuinely new event from the same value being returned again on
+# an unrelated rerun (the component's last value persists in session_state like
+# any widget's).
+
+def _open_new_cat_dialog(bank: str, tx_ids: list, concepts: list, apply_all: bool):
+    st.session_state[f"_pending_new_cat_{bank}"] = tx_ids
+    st.session_state[f"_pending_concepts_{bank}"] = concepts
+    st.session_state[f"_pending_apply_all_{bank}"] = apply_all
+    st.session_state["_dialog_bank"] = bank
+    if st.session_state.get("lang", "es") == "es":
+        _new_cat_dialog_es()
+    else:
+        _new_cat_dialog_en()
+
 
 def render_movements(bank_df: pd.DataFrame, bank: str):
     SENTINEL = t("add_cat_sentinel")
     cats = st.session_state.categories
     _valid_cats = set(cats)
-
-    with st.expander("🧪 Tabulator preview (experimental, read-only)"):
-        st.caption(
-            "Type directly into the column headers below to filter — that's Tabulator's "
-            "native headerFilter feature. This preview is read-only; category edits here "
-            "are not saved (a real integration needs a custom Streamlit component)."
-        )
-        _render_tabulator_poc(bank_df, bank, cats)
 
     # ── Controls ──────────────────────────────────────────────────────────────
     _ck_col, _btn_col = st.columns([4, 1])
@@ -620,26 +592,10 @@ def render_movements(bank_df: pd.DataFrame, bank: str):
         )
     with _btn_col:
         if st.button(t("refresh_btn"), key=f"refresh_btn_{bank}", use_container_width=True):
-            st.session_state.pop(f"editor_{bank}", None)
             _mark_active_bank(bank)
             st.rerun()
 
-    # ── Search / filter row — boxes aligned above their matching table column ──
-    _col_date, _col_concept, _col_amount, _col_balance, _col_category = st.columns(
-        [1, 2.5, 1, 1, 1.5]
-    )
-    with _col_concept:
-        _q_concept = st.text_input(
-            "concept_search", key=f"q_concept_{bank}",
-            placeholder=t("filter_concept_ph"), label_visibility="collapsed",
-        )
-    with _col_category:
-        _q_cats = st.multiselect(
-            "cat_filter", options=cats, key=f"q_cats_{bank}",
-            placeholder=t("filter_cat_ph"), label_visibility="collapsed",
-        )
-
-    # ── Build display ─────────────────────────────────────────────────────────
+    # ── Build rows for the grid ──────────────────────────────────────────────
     display = bank_df[["date", "concept", "amount", "balance", "category", "tx_id"]].copy()
     display["date"]     = display["date"].dt.strftime("%Y-%m-%d")
     display["amount"]   = display["amount"].round(2)
@@ -649,119 +605,72 @@ def render_movements(bank_df: pd.DataFrame, bank: str):
         .fillna("other")
         .where(display["category"].isin(_valid_cats), "other")
     )
-    display = display.reset_index(drop=True)
+    rows = display[["tx_id", "date", "concept", "amount", "balance", "category"]].to_dict("records")
 
-    # ── Apply search filters ──────────────────────────────────────────────────
-    mask = pd.Series(True, index=display.index)
-    if _q_concept:
-        mask &= display["concept"].str.contains(_q_concept, case=False, na=False, regex=False)
-    if _q_cats:
-        mask &= display["category"].isin(_q_cats)
-
-    display_view = display[mask].reset_index(drop=True)
-
-    # Reset editor state when filter changes so row-index mapping stays valid
-    _fsig = f"{_q_concept}|{'|'.join(sorted(_q_cats))}"
-    if st.session_state.get(f"_fsig_{bank}") != _fsig:
-        st.session_state[f"_fsig_{bank}"] = _fsig
-        st.session_state.pop(f"editor_{bank}", None)
-
-    # ── Data editor ───────────────────────────────────────────────────────────
-    editor_input = display_view.drop(columns=["tx_id"]).copy()
-    editor_input.insert(0, "selected", False)
-
-    edited = st.data_editor(
-        editor_input,
-        column_config={
-            "selected": st.column_config.CheckboxColumn("☑", default=False, width="small"),
-            "date":     st.column_config.TextColumn(t("col_date"),      disabled=True, width="small"),
-            "concept":  st.column_config.TextColumn(t("col_concept"),   disabled=True, width="large"),
-            "amount":   st.column_config.NumberColumn(t("col_amount"),  disabled=True, format="%.2f", width="small"),
-            "balance":  st.column_config.NumberColumn(t("col_balance"), disabled=True, format="%.2f", width="small"),
-            "category": st.column_config.SelectboxColumn(
-                t("col_category"), options=cats + [SENTINEL], required=True, width="medium"
-            ),
+    value = _tabulator_editor(
+        rows=rows,
+        categories=cats,
+        sentinel=SENTINEL,
+        col_labels={
+            "date": t("col_date"), "concept": t("col_concept"), "amount": t("col_amount"),
+            "balance": t("col_balance"), "category": t("col_category"),
         },
-        hide_index=True,
-        use_container_width=True,
-        height=520,
-        key=f"editor_{bank}",
+        key=f"tabulator_{bank}",
     )
 
-    # ── Bulk selection: apply one category to every checked row ────────────────
-    n_selected = int(edited["selected"].sum())
-    _bulk_col, _bulk_btn = st.columns([3, 1])
-    with _bulk_col:
-        bulk_cat = st.selectbox(
-            t("bulk_cat_label"), options=cats, key=f"bulk_cat_{bank}",
-            label_visibility="collapsed", placeholder=t("bulk_cat_label"),
-        )
-    with _bulk_btn:
-        bulk_clicked = st.button(
-            t("bulk_apply_btn"), key=f"bulk_apply_{bank}",
-            use_container_width=True, disabled=n_selected == 0,
-        )
-    st.caption(t("rows_selected", n=n_selected))
+    if not value:
+        return
 
-    if bulk_clicked and n_selected > 0:
-        sel_idx = edited.index[edited["selected"]]
-        for idx in sel_idx:
-            tid = display_view.loc[idx, "tx_id"]
-            st.session_state.overrides[tid] = bulk_cat
+    seq_key = f"_tab_last_seq_{bank}"
+    seq = value.get("seq")
+    if seq is not None and st.session_state.get(seq_key) == seq:
+        return  # already processed this event on an earlier rerun
+    st.session_state[seq_key] = seq
+
+    kind = value.get("kind")
+
+    if kind == "edit":
+        tid, new_cat = value.get("tx_id"), value.get("category")
+        concept_row = bank_df.loc[bank_df["tx_id"] == tid, "concept"]
+        concept = concept_row.iloc[0] if len(concept_row) else ""
+
+        if new_cat == SENTINEL:
+            _open_new_cat_dialog(bank, [tid], [concept], apply_all)
+            return
+
+        pending = {tid: new_cat}
+        if apply_all:
+            prefix = _concept_prefix(concept)
+            if prefix:
+                _bank_full = df[df["bank"] == bank]
+                matches = _bank_full[_bank_full["concept"].str.strip().str.lower().str.startswith(prefix)]
+                for _, mrow in matches.iterrows():
+                    pending[mrow["tx_id"]] = new_cat
+        for t_id, cat in pending.items():
+            st.session_state.overrides[t_id] = cat
         _push_history()
         save_overrides(st.session_state.overrides)
-        st.toast(t("bulk_applied", cat=bulk_cat, n=len(sel_idx)), icon="✅")
-        st.session_state.pop(f"editor_{bank}", None)
+        if apply_all and len(pending) > 1:
+            st.toast(t("apply_all_toast", n=len(pending)), icon="✅")
         _mark_active_bank(bank)
         st.rerun()
 
-    # ── Detect and save changes ───────────────────────────────────────────────
-    changed      = edited["category"] != display_view["category"]
-    sentinel_sel = changed & (edited["category"] == SENTINEL)
-    real_changes = changed & ~sentinel_sel
-
-    if real_changes.any():
-        _bank_full = df[df["bank"] == bank]
-        pending = {}
-        for idx in display_view.index[real_changes]:
-            new_cat = edited.loc[idx, "category"]
-            tid     = display_view.loc[idx, "tx_id"]
-            pending[tid] = new_cat
-            if apply_all:
-                prefix = _concept_prefix(display_view.loc[idx, "concept"])
-                if prefix:
-                    matches = _bank_full[
-                        _bank_full["concept"].str.strip().str.lower().str.startswith(prefix)
-                    ]
-                    for _, mrow in matches.iterrows():
-                        pending[mrow["tx_id"]] = new_cat
-        for tid, cat in pending.items():
+    elif kind == "bulk":
+        tx_ids = value.get("tx_ids") or []
+        cat = value.get("category")
+        if not tx_ids or not cat:
+            return
+        if cat == SENTINEL:
+            concepts = bank_df.loc[bank_df["tx_id"].isin(tx_ids), "concept"].tolist()
+            _open_new_cat_dialog(bank, tx_ids, concepts, False)
+            return
+        for tid in tx_ids:
             st.session_state.overrides[tid] = cat
         _push_history()
         save_overrides(st.session_state.overrides)
-        n_direct = int(real_changes.sum())
-        if apply_all and len(pending) > n_direct:
-            st.toast(t("apply_all_toast", n=len(pending)), icon="✅")
-        st.session_state.pop(f"editor_{bank}", None)
+        st.toast(t("bulk_applied", cat=cat, n=len(tx_ids)), icon="✅")
         _mark_active_bank(bank)
         st.rerun()
-
-    if sentinel_sel.any():
-        st.session_state[f"_pending_new_cat_{bank}"] = [
-            display_view.loc[idx, "tx_id"] for idx in display_view.index[sentinel_sel]
-        ]
-        st.session_state[f"_pending_concepts_{bank}"] = [
-            display_view.loc[idx, "concept"] for idx in display_view.index[sentinel_sel]
-        ]
-        st.session_state[f"_pending_apply_all_{bank}"] = apply_all
-        st.session_state["_dialog_bank"] = bank
-        st.session_state.pop(f"editor_{bank}", None)
-        if st.session_state.get("lang", "es") == "es":
-            _new_cat_dialog_es()
-        else:
-            _new_cat_dialog_en()
-    elif st.session_state.get(f"_pending_new_cat_{bank}"):
-        st.session_state.pop(f"_pending_new_cat_{bank}", None)
 
 
 # ── Bank subtab: charts ───────────────────────────────────────────────────────
