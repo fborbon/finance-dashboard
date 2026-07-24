@@ -64,8 +64,6 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "filters": "Filtros",
         "date_range": "Rango de fechas",
         "hide_transfers": "Ocultar transferencias entre cuentas propias",
-        "category_filter_label": "Categorías",
-        "category_filter_help": "Desmarca categorías para excluirlas de tablas y gráficos.",
         "language_btn": "🇬🇧 English",
         # top-level tabs
         "tab_overview": "📊 Resumen",
@@ -134,14 +132,8 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "add_cat_btn_ok": "Añadir",
         "cancel_btn": "Cancelar",
         "new_cat_added": "Categoría '{name}' añadida.",
-        # bulk row assignment
-        "bulk_apply_btn":   "Aplicar selección",
-        "rows_selected":    "{n} fila(s) seleccionadas",
-        "select_rows_hint": "☑ Selecciona filas · elige categoría · Aplicar o Guardar",
-        "bulk_applied":     "'{cat}' aplicado a {n} fila(s)",
         "save_btn":         "Guardar",
         "refresh_btn":      "🔄 Actualizar tabla",
-        "bulk_cat_label":   "Categoría para selección",
         "auto_classified":  "✅ {n} fila(s) categorizadas automáticamente.",
         "filter_all":       "(Todas las categorías)",
         "filter_concept_ph": "🔍 Buscar concepto…",
@@ -154,8 +146,6 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "filters": "Filters",
         "date_range": "Date range",
         "hide_transfers": "Hide own inter-bank transfers",
-        "category_filter_label": "Categories",
-        "category_filter_help": "Uncheck categories to exclude them from tables and charts.",
         "language_btn": "🇪🇸 Español",
         "tab_overview": "📊 Overview",
         "tab_categories": "⚙️ Categories",
@@ -214,14 +204,8 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "add_cat_btn_ok": "Add",
         "cancel_btn": "Cancel",
         "new_cat_added": "Category '{name}' added.",
-        # bulk row assignment
-        "bulk_apply_btn":   "Apply selection",
-        "rows_selected":    "{n} row(s) selected",
-        "select_rows_hint": "☑ Select rows · pick category · Apply or Save",
-        "bulk_applied":     "'{cat}' applied to {n} row(s)",
         "save_btn":         "Save",
         "refresh_btn":      "🔄 Refresh table",
-        "bulk_cat_label":   "Category for selection",
         "auto_classified":  "✅ {n} row(s) auto-classified.",
         "filter_all":       "(All categories)",
         "filter_concept_ph": "🔍 Search concept…",
@@ -434,18 +418,6 @@ start_date = df["date"].min().date()
 end_date = df["date"].max().date()
 hide_transfers = st.sidebar.checkbox(t("hide_transfers"), value=False)
 
-st.session_state.setdefault("cat_filter_sidebar", st.session_state.categories.copy())
-# Drop any categories from the saved selection that no longer exist.
-st.session_state["cat_filter_sidebar"] = [
-    c for c in st.session_state["cat_filter_sidebar"] if c in st.session_state.categories
-]
-active_categories = st.sidebar.multiselect(
-    t("category_filter_label"),
-    options=st.session_state.categories,
-    key="cat_filter_sidebar",
-    help=t("category_filter_help"),
-)
-
 st.sidebar.divider()
 if st.sidebar.button(t("language_btn"), use_container_width=True):
     st.session_state.lang = "en" if st.session_state.lang == "es" else "es"
@@ -483,7 +455,6 @@ def apply_filters(source: pd.DataFrame) -> pd.DataFrame:
     mask = (source["date"].dt.date >= start_date) & (source["date"].dt.date <= end_date)
     if hide_transfers:
         mask &= ~source["category"].isin(TRANSFER_CATS)
-    mask &= source["category"].isin(active_categories)
     return source[mask].copy()
 
 
@@ -652,23 +623,6 @@ def render_movements(bank_df: pd.DataFrame, bank: str):
         save_overrides(st.session_state.overrides)
         if apply_all and len(pending) > 1:
             st.toast(t("apply_all_toast", n=len(pending)), icon="✅")
-        _mark_active_bank(bank)
-        st.rerun()
-
-    elif kind == "bulk":
-        tx_ids = value.get("tx_ids") or []
-        cat = value.get("category")
-        if not tx_ids or not cat:
-            return
-        if cat == SENTINEL:
-            concepts = bank_df.loc[bank_df["tx_id"].isin(tx_ids), "concept"].tolist()
-            _open_new_cat_dialog(bank, tx_ids, concepts, False)
-            return
-        for tid in tx_ids:
-            st.session_state.overrides[tid] = cat
-        _push_history()
-        save_overrides(st.session_state.overrides)
-        st.toast(t("bulk_applied", cat=cat, n=len(tx_ids)), icon="✅")
         _mark_active_bank(bank)
         st.rerun()
 
