@@ -56,7 +56,7 @@ $SSH -i "$KEY" "$SERVER" bash <<'REMOTE'
     fi
     source venv/bin/activate
     pip install --quiet --upgrade pip
-    pip install --quiet streamlit pandas plotly openpyxl xlrd numpy
+    pip install --quiet streamlit pandas plotly openpyxl xlrd numpy pymupdf
 REMOTE
 ok "Dependencies installed"
 

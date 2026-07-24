@@ -1,4 +1,5 @@
 import hashlib
+import re
 import pandas as pd
 from pathlib import Path
 
@@ -13,7 +14,9 @@ CATEGORIES = [
       "intl supermarket", "international supermarket", "travel grocery",
       "mercadona", "carrefour", "leclerc", "lidl", "aldi", "eroski", "coviran",
       "tj-bm", "carniceria", "fruteria", "tj-dia ", "chuleteros", "carnicas",
-      "frutimix", "tj-monop", "tj-mendi", "mas x menos"], "supermarket"),
+      "frutimix", "tj-monop", "tj-mendi", "mas x menos",
+      "auto mercado", "mini super", "walmart", "super ofermas",
+      "mercadito", "pali ", "gran pequeno"], "supermarket"),
     # Amazon
     (["amazon", "amzn", "prime video"], "amazon"),
     # Pharmacy
@@ -31,7 +34,8 @@ CATEGORIES = [
       "tasca ", "la guillotina", "hostal ", "tj-zuasti", "sota de lezkairu",
       "k fecico", "kfc", "central park", "pops ", "brief atocha",
       "la huerta de chicha", "el faro de suances", "tj-calenda",
-      "tj-glaces", "tj-arcasa", "tj-plk", "tj-garden", "tj-butchers"], "restaurant"),
+      "tj-glaces", "tj-arcasa", "tj-plk", "tj-garden", "tj-butchers",
+      "soda ", "rosti pollos"], "restaurant"),
     (["café", "cafe "], "restaurant"),
     (["bar "], "restaurant"),
     # Hotel
@@ -43,7 +47,8 @@ CATEGORIES = [
     (["air connect", "euro airways", "budget airlines",
       "expedia", "vueling", "iberia", "ryanair", "evelop", "lufthansa", "airlines"], "flight"),
     # Taxi
-    (["city taxi", "quickcab", "airport taxi", "taxi licencia", "taxi "], "taxi"),
+    (["city taxi", "quickcab", "airport taxi", "taxi licencia", "taxi ",
+      "uber"], "taxi"),
     # DIY / home improvement
     (["buildright", "home depot", "tool store", "paint express",
       "leroy merlin", "brico depot", "ferreteria", "textil hogar",
@@ -53,13 +58,14 @@ CATEGORIES = [
     # Fuel
     (["highway fuel", "city gas station", "express petrol", "motorway petrol",
       "olloki oil", "es lezkairu", "mutilva", "tj-e.s. zuasti", "cepsa",
-      "petro", "gasolinera", "gasolina", "low cost repost", "aralar soto"], "fuel"),
+      "petro", "gasolinera", "gasolina", "low cost repost", "aralar soto",
+      "estacion de servicio", "estacion servicio", "servicentro"], "fuel"),
     # Toll
     (["highway toll", "north motorway", "city bypass toll", "east toll road",
       "vasco aragonesa", "autopista", "interbiak", "peage", "bidegi"], "toll"),
     # Parking
     (["city parking", "central car park", "station parking", "mall car park",
-      "parking", "aparcamiento", "ap. pl. castillo", "telpark"], "parking"),
+      "parking", "aparcamiento", "ap. pl. castillo", "telpark", "parqueo"], "parking"),
     # Internet & mobile
     (["telecom mobile", "netconnect", "móvil ", "vodafone", "lowi", "mybox", "orange"], "internet & mobile"),
     # Utilities
@@ -73,12 +79,14 @@ CATEGORIES = [
     (["bank loan payment", "préstamo4227846153", "hipoteca mendillori", "pres.32551789564",
       "santander consumer", "berlingo"], "loan"),
     # Investment
-    (["interactive brokers", "revolut digital assets"], "investment"),
+    (["interactive brokers", "revolut digital assets",
+      "/cdp ", "superfondo", "cancelacion anticipada"], "investment"),
     # Dept. store
     (["the mall", "city department store", "tj-0246 eci", "el corte ingles", "corte ingles",
       "tj-ikea", "ikea", "herno", "mediacite"], "dept. store"),
     # ATM
-    (["atm cash withdrawal", "cash withdrawal", "reint.cajero", "cajero", "tj-cajero"], "atm"),
+    (["atm cash withdrawal", "cash withdrawal", "reint.cajero", "cajero", "tj-cajero",
+      "atm "], "atm"),
     # Bizum
     (["bizum recibido", "bizum"], "bizum"),
     # PayPal
@@ -97,7 +105,8 @@ CATEGORIES = [
     # Income / salary
     (["employer corp", "salary payment", "freelance income",
       "ing. cheque ajeno", "ingreso cajero", "apertura cta",
-      "magotteaux", "tgss", "direccion provincial"], "income"),
+      "magotteaux", "tgss", "direccion provincial",
+      "bncr/intereses ganados"], "income"),
     # Generic transfer
     (["transferencia", "trf. ", "transf. a su favor"], "transfer"),
     # Exchange
@@ -130,6 +139,128 @@ def _dedup(df: pd.DataFrame) -> pd.DataFrame:
 
     ids = df.apply(lambda r: hashlib.md5(_row_key(r).encode()).hexdigest(), axis=1)
     return df[~ids.duplicated(keep="first")].reset_index(drop=True)
+
+
+# ── BNCR PDF loader (Banco Nacional de Costa Rica statements, colones) ──────
+# Statements have a text layer (not scanned), extracted line-by-line: each
+# transaction is a repeating group of FECHA / NÚMERO / DESCRIPCIÓN / MONTO /
+# SALDO DIARIO lines. DESCRIPCIÓN occasionally wraps onto an extra line, so
+# the parser consumes lines until it hits one that looks like a money amount
+# rather than assuming a fixed group size.
+
+_BNCR_MONEY_RE = re.compile(r"^-?[\d,]+\.\d{2}$")
+_BNCR_DATE_RE = re.compile(r"^\d{2}/\d{2}$")
+_BNCR_LAST_STMT_RE = re.compile(r"Fecha último estado:\s*(\d{2}/\d{2}/\d{4})")
+_BNCR_THIS_STMT_RE = re.compile(r"Fecha de este estado:\s*(\d{2}/\d{2}/\d{4})")
+_BNCR_SALDO_ANT_RE = re.compile(r"Saldo anterior:\s*(-?[\d,]+\.\d{2})")
+_BNCR_SALDO_ACT_RE = re.compile(r"Saldo actual:\s*(-?[\d,]+\.\d{2})")
+
+
+def _bncr_to_float(s: str) -> float:
+    return float(s.replace(",", ""))
+
+
+def _parse_bncr_pdf(path: Path) -> tuple[pd.DataFrame, dict]:
+    import fitz  # PyMuPDF — local import so the rest of the app works without it installed
+
+    doc = fitz.open(path)
+    lines = []
+    for page in doc:
+        lines.extend(page.get_text().splitlines())
+    lines = [l.strip() for l in lines if l.strip()]
+
+    last_stmt = this_stmt = saldo_anterior = saldo_actual = None
+    for l in lines:
+        if m := _BNCR_LAST_STMT_RE.search(l):
+            last_stmt = pd.to_datetime(m.group(1), dayfirst=True)
+        if m := _BNCR_THIS_STMT_RE.search(l):
+            this_stmt = pd.to_datetime(m.group(1), dayfirst=True)
+        if m := _BNCR_SALDO_ANT_RE.search(l):
+            saldo_anterior = _bncr_to_float(m.group(1))
+        if m := _BNCR_SALDO_ACT_RE.search(l):
+            saldo_actual = _bncr_to_float(m.group(1))
+
+    try:
+        start = lines.index("SALDO DIARIO") + 1
+    except ValueError:
+        start = 0
+
+    rows = []
+    i, n = start, len(lines)
+    while i < n:
+        if lines[i].startswith("Saldo anterior:"):
+            break
+        if not _BNCR_DATE_RE.match(lines[i]):
+            i += 1
+            continue
+        date_str = lines[i]
+        i += 1
+        if i >= n:
+            break
+        i += 1  # skip reference number, not needed
+        desc_parts = []
+        while i < n and not _BNCR_MONEY_RE.match(lines[i]):
+            desc_parts.append(lines[i])
+            i += 1
+        if i >= n:
+            break
+        amount = _bncr_to_float(lines[i])
+        i += 1
+        if i >= n or not _BNCR_MONEY_RE.match(lines[i]):
+            break
+        balance = _bncr_to_float(lines[i])
+        i += 1
+        # Strip the embedded "DD-MM-YY " purchase-date prefix some descriptions carry.
+        concept = re.sub(r"^\d{2}-\d{2}-\d{2}\s+", "", " ".join(desc_parts).strip())
+        rows.append({"date_str": date_str, "concept": concept, "amount": amount, "balance": balance})
+
+    for r in rows:
+        day, month = r["date_str"].split("/")
+        year = this_stmt.year
+        candidate = pd.Timestamp(year=year, month=int(month), day=int(day))
+        if candidate > this_stmt:
+            candidate = pd.Timestamp(year=year - 1, month=int(month), day=int(day))
+        r["date"] = candidate
+        del r["date_str"]
+
+    df = pd.DataFrame(rows, columns=["date", "concept", "amount", "balance"])
+    meta = {
+        "file": path.name, "last_stmt": last_stmt, "this_stmt": this_stmt,
+        "saldo_anterior": saldo_anterior, "saldo_actual": saldo_actual,
+    }
+    return df, meta
+
+
+def bncr_continuity_report() -> list[dict]:
+    """Return one entry per gap between consecutive BNCR statements where the
+    closing balance of one doesn't match the opening balance of the next —
+    i.e. a statement (or more) covering that period is missing."""
+    paths = sorted((BASE / "BNCR").glob("*.pdf"))
+    if not paths:
+        return []
+    metas = [_parse_bncr_pdf(p)[1] for p in paths]
+    gaps = []
+    for prev, cur in zip(metas, metas[1:]):
+        if abs(prev["saldo_actual"] - cur["saldo_anterior"]) > 0.01:
+            gaps.append({
+                "after_file": prev["file"], "before_file": cur["file"],
+                "after_date": prev["this_stmt"], "before_date": cur["last_stmt"],
+                "balance_after": prev["saldo_actual"], "balance_before": cur["saldo_anterior"],
+                "difference": cur["saldo_anterior"] - prev["saldo_actual"],
+            })
+    return gaps
+
+
+def load_bncr() -> pd.DataFrame:
+    dfs = []
+    for p in sorted((BASE / "BNCR").glob("*.pdf")):
+        part, _ = _parse_bncr_pdf(p)
+        dfs.append(part)
+    df = pd.concat(dfs, ignore_index=True)
+    df["bank"] = "BNCR"
+    df["concept"] = df["concept"].astype(str).str.strip()
+    df["category"] = df["concept"].apply(_categorize)
+    return _dedup(df.dropna(subset=["date", "amount"]).sort_values("date").reset_index(drop=True))
 
 
 # ── Revolut CSV helper (shared by Bank3 and Revo) ────────────────────────────
@@ -411,6 +542,10 @@ def load_all() -> pd.DataFrame:
         parts.append(load_revo())
     elif list((BASE / "Bank3").glob("*.csv")):
         parts.append(load_bank3())
+
+    # PDF statements — Banco Nacional de Costa Rica (colones, no demo fallback)
+    if list((BASE / "BNCR").glob("*.pdf")):
+        parts.append(load_bncr())
 
     df = pd.concat(parts, ignore_index=True)
     df["amount"]  = pd.to_numeric(df["amount"],  errors="coerce")

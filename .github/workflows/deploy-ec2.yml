@@ -7,6 +7,8 @@ on:
       - '*.py'
       - 'config.toml'
       - 'requirements.txt'
+      - 'tabulator_component/**'
+      - 'checklist_dropdown/**'
   workflow_dispatch:
 
 jobs:
@@ -41,6 +43,7 @@ jobs:
             --exclude "Rural/" \
             --exclude "Caixa/" \
             --exclude "Revo/" \
+            --exclude "BNCR/" \
             --exclude "static/" \
             --exclude "deploy/" \
             --exclude "docs/" \

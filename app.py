@@ -42,8 +42,16 @@ _category_checklist = st.components.v1.declare_component(
 BANK_COLORS = {
     "Bank1": "#1f77b4", "Bank2": "#ff7f0e", "Bank3": "#9467bd",
     "Rural": "#1f77b4", "Caixa": "#ff7f0e", "Revo": "#9467bd",
+    "BNCR": "#2ca02c",
 }
 TRANSFER_CATS = {"own transfer", "transfer"}
+
+# Banks not denominated in EUR — excluded from the Resumen tab's cross-bank
+# totals/charts (which sum or share an axis across banks) since mixing
+# currencies there would produce meaningless numbers. Each bank still gets
+# its own fully-functional tab, with its own currency in labels/summaries.
+BANK_CURRENCY = {"BNCR": "₡"}
+_DEFAULT_CURRENCY = "€"
 
 HTPASSWD_FILE = Path("/etc/nginx/.htpasswd_banking")
 
@@ -54,6 +62,7 @@ BANK_DIRS = {
     "Rural": (BASE / "Rural", ["xlsx", "xls"]),
     "Caixa": (BASE / "Caixa", ["xlsx", "xls"]),
     "Revo":  (BASE / "Revo",  ["csv"]),
+    "BNCR":  (BASE / "BNCR",  ["pdf"]),
 }
 
 # ── Translations ──────────────────────────────────────────────────────────────
@@ -607,13 +616,17 @@ def render_movements(bank_df: pd.DataFrame, bank: str):
     )
     rows = display[["tx_id", "date", "concept", "amount", "balance", "category"]].to_dict("records")
 
+    _currency = BANK_CURRENCY.get(bank, _DEFAULT_CURRENCY)
     value = _tabulator_editor(
         rows=rows,
         categories=cats,
         sentinel=SENTINEL,
+        currency=_currency,
         col_labels={
-            "date": t("col_date"), "concept": t("col_concept"), "amount": t("col_amount"),
-            "balance": t("col_balance"), "category": t("col_category"),
+            "date": t("col_date"), "concept": t("col_concept"),
+            "amount": t("col_amount").replace(_DEFAULT_CURRENCY, _currency),
+            "balance": t("col_balance").replace(_DEFAULT_CURRENCY, _currency),
+            "category": t("col_category"),
         },
         summary_labels={
             "total": t("summary_total"), "monthly": t("summary_monthly"), "yearly": t("summary_yearly"),
@@ -664,6 +677,7 @@ def render_movements(bank_df: pd.DataFrame, bank: str):
 
 def render_charts(bank_df: pd.DataFrame, bank: str):
     color = BANK_COLORS.get(bank, "#555")
+    _currency = BANK_CURRENCY.get(bank, _DEFAULT_CURRENCY)
 
     cats = st.session_state.categories
 
@@ -693,7 +707,7 @@ def render_charts(bank_df: pd.DataFrame, bank: str):
         bal["day"] = bal["date"].dt.normalize()
         daily = bal.groupby("day")["balance"].last().reset_index().rename(columns={"day": "date"})
         fig = px.line(daily, x="date", y="balance", line_shape="hv",
-                      color_discrete_sequence=[color], labels={"balance": "€", "date": ""})
+                      color_discrete_sequence=[color], labels={"balance": _currency, "date": ""})
         st.plotly_chart(fig, use_container_width=True)
 
     with col_r:
@@ -715,7 +729,7 @@ def render_charts(bank_df: pd.DataFrame, bank: str):
         .reset_index()
     )
     fig3 = px.bar(monthly, x="month", y="amount",
-                  color_discrete_sequence=[color], labels={"amount": "€", "month": ""})
+                  color_discrete_sequence=[color], labels={"amount": _currency, "month": ""})
     fig3.add_hline(y=0, line_width=1, line_color="gray")
     st.plotly_chart(fig3, use_container_width=True)
 
@@ -739,7 +753,7 @@ def render_charts(bank_df: pd.DataFrame, bank: str):
             fig_pi = px.bar(
                 inc_df, x="amount", y="category", orientation="h",
                 color_discrete_sequence=["#2ca02c"],
-                labels={"amount": "€", "category": ""},
+                labels={"amount": _currency, "category": ""},
             )
             fig_pi.update_layout(height=_hi, margin={"l": 0, "r": 10, "t": 10, "b": 0})
             st.plotly_chart(fig_pi, use_container_width=True)
@@ -759,7 +773,7 @@ def render_charts(bank_df: pd.DataFrame, bank: str):
             fig_pe = px.bar(
                 exp_df, x="amount", y="category", orientation="h",
                 color_discrete_sequence=["#d62728"],
-                labels={"amount": "€", "category": ""},
+                labels={"amount": _currency, "category": ""},
             )
             fig_pe.update_layout(height=_he, margin={"l": 0, "r": 10, "t": 10, "b": 0})
             st.plotly_chart(fig_pe, use_container_width=True)
@@ -809,22 +823,30 @@ def render_upload(bank: str):
 def render_overview():
     filtered = apply_filters(df)
 
-    cols = st.columns(5)
+    # Banks in a different currency (BNCR/colones) are excluded from every
+    # cross-bank total/chart below — summing or sharing an axis across
+    # currencies would produce meaningless numbers. They still get their own
+    # fully-functional per-bank tab (render_movements/render_charts).
+    eur_banks = [b for b in all_banks if b not in BANK_CURRENCY]
+    filtered_eur = filtered[filtered["bank"].isin(eur_banks)]
+
+    cols = st.columns(len(all_banks) + 2)
     for i, bank in enumerate(all_banks):
         last = df[df["bank"] == bank].dropna(subset=["balance"]).sort_values("date")
         if not last.empty:
-            cols[i].metric(f"🏦 {bank}", f"€{last['balance'].iloc[-1]:,.2f}")
-    total_in  = filtered[filtered["amount"] > 0]["amount"].sum()
-    total_out = filtered[filtered["amount"] < 0]["amount"].sum()
-    cols[3].metric(t("metric_income"),   f"€{total_in:,.0f}")
-    cols[4].metric(t("metric_expenses"), f"€{abs(total_out):,.0f}")
+            currency = BANK_CURRENCY.get(bank, _DEFAULT_CURRENCY)
+            cols[i].metric(f"🏦 {bank}", f"{currency}{last['balance'].iloc[-1]:,.2f}")
+    total_in  = filtered_eur[filtered_eur["amount"] > 0]["amount"].sum()
+    total_out = filtered_eur[filtered_eur["amount"] < 0]["amount"].sum()
+    cols[len(all_banks)].metric(t("metric_income"),   f"€{total_in:,.0f}")
+    cols[len(all_banks) + 1].metric(t("metric_expenses"), f"€{abs(total_out):,.0f}")
 
     st.divider()
 
     col_l, col_r = st.columns(2)
     with col_l:
         st.subheader(t("balance_over_time"))
-        bal = df[df["bank"].isin(all_banks)].dropna(subset=["balance"]).copy()
+        bal = df[df["bank"].isin(eur_banks)].dropna(subset=["balance"]).copy()
         bal["day"] = bal["date"].dt.normalize()
         daily = (
             bal.groupby(["bank", "day"])["balance"].last()
@@ -839,7 +861,7 @@ def render_overview():
     with col_r:
         st.subheader(t("monthly_net_flow"))
         monthly = (
-            filtered.assign(month=filtered["date"].dt.to_period("M").dt.to_timestamp())
+            filtered_eur.assign(month=filtered_eur["date"].dt.to_period("M").dt.to_timestamp())
             .groupby(["bank", "month"])["amount"].sum()
             .reset_index()
         )
@@ -853,7 +875,7 @@ def render_overview():
     col_l2, col_r2 = st.columns(2)
     with col_l2:
         st.subheader(t("expenses_by_cat_year"))
-        exp = filtered[filtered["amount"] < 0].copy()
+        exp = filtered_eur[filtered_eur["amount"] < 0].copy()
         exp["year"] = exp["date"].dt.year.astype(str)
         by_cat = exp.groupby(["category", "year"])["amount"].sum().abs().reset_index()
         fig3 = px.bar(by_cat, x="amount", y="category", color="year",
@@ -863,7 +885,7 @@ def render_overview():
 
     with col_r2:
         st.subheader(t("income_by_cat_year"))
-        inc = filtered[filtered["amount"] > 0].copy()
+        inc = filtered_eur[filtered_eur["amount"] > 0].copy()
         inc["year"] = inc["date"].dt.year.astype(str)
         by_cat2 = inc.groupby(["category", "year"])["amount"].sum().reset_index()
         fig4 = px.bar(by_cat2, x="amount", y="category", color="year",
