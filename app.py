@@ -87,6 +87,11 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "expenses_by_cat_year": "Gastos por categoría y año",
         "income_by_cat_year": "Ingresos por categoría y año",
         # charts
+        "chart_cat_filter_label": "Categorías a incluir",
+        "select_all_btn": "✓ Todo",
+        "select_all_help": "Seleccionar todas las categorías",
+        "select_none_btn": "✗ Ninguno",
+        "select_none_help": "Deseleccionar todas las categorías",
         "balance_over_time_bank": "Balance a lo largo del tiempo",
         "expenses_by_cat": "Movimientos por categoría",
         "no_expenses": "Sin gastos en este período.",
@@ -164,6 +169,11 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "monthly_net_flow": "Monthly net cash flow",
         "expenses_by_cat_year": "Expenses by category & year",
         "income_by_cat_year": "Income by category & year",
+        "chart_cat_filter_label": "Categories to include",
+        "select_all_btn": "✓ All",
+        "select_all_help": "Select all categories",
+        "select_none_btn": "✗ None",
+        "select_none_help": "Deselect all categories",
         "balance_over_time_bank": "Balance over time",
         "expenses_by_cat": "Expenses by category",
         "no_expenses": "No expenses in this period.",
@@ -631,6 +641,26 @@ def render_movements(bank_df: pd.DataFrame, bank: str):
 
 def render_charts(bank_df: pd.DataFrame, bank: str):
     color = BANK_COLORS.get(bank, "#555")
+
+    cats = st.session_state.categories
+    _ck_key = f"chart_cats_{bank}"
+    st.session_state.setdefault(_ck_key, cats.copy())
+    # Drop categories from the saved selection that no longer exist.
+    st.session_state[_ck_key] = [c for c in st.session_state[_ck_key] if c in cats]
+
+    _ms_col, _all_col, _none_col = st.columns([6, 1, 1])
+    with _all_col:
+        if st.button(t("select_all_btn"), key=f"{_ck_key}_all", use_container_width=True, help=t("select_all_help")):
+            st.session_state[_ck_key] = cats.copy()
+            st.rerun()
+    with _none_col:
+        if st.button(t("select_none_btn"), key=f"{_ck_key}_none", use_container_width=True, help=t("select_none_help")):
+            st.session_state[_ck_key] = []
+            st.rerun()
+    with _ms_col:
+        selected_cats = st.multiselect(t("chart_cat_filter_label"), options=cats, key=_ck_key)
+
+    bank_df = bank_df[bank_df["category"].isin(selected_cats)]
 
     col_l, col_r = st.columns(2)
 
