@@ -107,6 +107,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "income_by_cat_year": "Ingresos por categoría y año",
         # charts
         "chart_cat_filter_label": "Categorías a incluir",
+        "chart_year_filter_label": "Años a incluir",
         "chart_all_selected": "Todas",
         "chart_none_selected": "Ninguna",
         "chart_selected_suffix": "seleccionadas",
@@ -196,6 +197,7 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "expenses_by_cat_year": "Expenses by category & year",
         "income_by_cat_year": "Income by category & year",
         "chart_cat_filter_label": "Categories to include",
+        "chart_year_filter_label": "Years to include",
         "chart_all_selected": "All",
         "chart_none_selected": "None",
         "chart_selected_suffix": "selected",
@@ -680,24 +682,33 @@ def render_charts(bank_df: pd.DataFrame, bank: str):
     _currency = BANK_CURRENCY.get(bank, _DEFAULT_CURRENCY)
 
     cats = st.session_state.categories
+    years = sorted(bank_df["date"].dt.year.dropna().astype(int).astype(str).unique().tolist(), reverse=True)
+
+    _checklist_labels = {
+        "all_selected": t("chart_all_selected"),
+        "none_selected": t("chart_none_selected"),
+        "selected_suffix": t("chart_selected_suffix"),
+        "no_matches": t("chart_no_matches"),
+        "select_all_row": t("chart_select_all_row"),
+        "search_placeholder": t("chart_search_ph"),
+    }
 
     st.caption(t("chart_cat_filter_label"))
     _cat_value = _category_checklist(
-        options=cats,
-        selected=cats,
-        labels={
-            "all_selected": t("chart_all_selected"),
-            "none_selected": t("chart_none_selected"),
-            "selected_suffix": t("chart_selected_suffix"),
-            "no_matches": t("chart_no_matches"),
-            "select_all_row": t("chart_select_all_row"),
-            "search_placeholder": t("chart_search_ph"),
-        },
-        key=f"chart_cats_{bank}",
+        options=cats, selected=cats, labels=_checklist_labels, key=f"chart_cats_{bank}",
     )
     selected_cats = _cat_value["selected"] if _cat_value else cats
 
-    bank_df = bank_df[bank_df["category"].isin(selected_cats)]
+    st.caption(t("chart_year_filter_label"))
+    _year_value = _category_checklist(
+        options=years, selected=years, labels=_checklist_labels, key=f"chart_years_{bank}",
+    )
+    selected_years = _year_value["selected"] if _year_value else years
+
+    bank_df = bank_df[
+        bank_df["category"].isin(selected_cats)
+        & bank_df["date"].dt.year.astype(str).isin(selected_years)
+    ]
 
     col_l, col_r = st.columns(2)
 
