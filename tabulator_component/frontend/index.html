@@ -10,20 +10,37 @@
     margin-top: 14px;
     padding-top: 10px;
     border-top: 1px solid rgba(128,128,128,0.4);
-    display: flex;
-    gap: 32px;
-    flex-wrap: wrap;
+    display: grid;
+    grid-template-columns: 100px repeat(3, minmax(100px, 1fr));
+    row-gap: 6px;
+    column-gap: 20px;
+    align-items: center;
   }
-  #summary .label { color: #888; font-size: 12px; }
-  #summary .value { font-size: 15px; font-weight: 600; }
+  /* Matches Tabulator's own header text color/weight (rgb(85,85,85), bold)
+     so the numbers stay readable against Streamlit's dark theme instead of
+     inheriting the browser default black-on-transparent. */
+  #summary .colhead { color: #888; font-size: 12px; }
+  #summary .rowhead { color: #555; font-weight: 700; font-size: 13px; }
+  #summary .value { font-size: 15px; font-weight: 700; color: #555; }
 </style>
 </head>
 <body>
 <div id="grid"></div>
 <div id="summary">
-  <div><div class="label" id="lblTotal">Total</div><div class="value" id="sumTotal">–</div></div>
-  <div><div class="label" id="lblMonthly">Monthly avg.</div><div class="value" id="sumMonthly">–</div></div>
-  <div><div class="label" id="lblYearly">Yearly avg.</div><div class="value" id="sumYearly">–</div></div>
+  <div></div>
+  <div class="colhead" id="lblTotal">Total</div>
+  <div class="colhead" id="lblMonthly">Monthly avg.</div>
+  <div class="colhead" id="lblYearly">Yearly avg.</div>
+
+  <div class="rowhead" id="lblIncome">Income</div>
+  <div class="value" id="incTotal">–</div>
+  <div class="value" id="incMonthly">–</div>
+  <div class="value" id="incYearly">–</div>
+
+  <div class="rowhead" id="lblExpense">Expenses</div>
+  <div class="value" id="expTotal">–</div>
+  <div class="value" id="expMonthly">–</div>
+  <div class="value" id="expYearly">–</div>
 </div>
 <script>
 let table = null;
@@ -56,28 +73,38 @@ function fmtAmount(n) {
 function updateSummary() {
   if (!table) return;
   const rows = table.getData("active"); // respects header filters
-  let total = 0;
-  const months = new Set();
-  const years = new Set();
+  let incTotal = 0, expTotal = 0;
+  const incMonths = new Set(), incYears = new Set();
+  const expMonths = new Set(), expYears = new Set();
   rows.forEach(function(r) {
     const amt = parseFloat(r.amount);
-    if (!isNaN(amt)) total += amt;
-    if (r.date && r.date.length >= 7) {
-      months.add(r.date.slice(0, 7));
-      years.add(r.date.slice(0, 4));
+    if (isNaN(amt)) return;
+    const ym = r.date && r.date.length >= 7 ? r.date.slice(0, 7) : null;
+    const y  = r.date && r.date.length >= 4 ? r.date.slice(0, 4) : null;
+    if (amt >= 0) {
+      incTotal += amt;
+      if (ym) incMonths.add(ym);
+      if (y) incYears.add(y);
+    } else {
+      expTotal += -amt;
+      if (ym) expMonths.add(ym);
+      if (y) expYears.add(y);
     }
   });
-  const monthlyAvg = months.size > 0 ? total / months.size : 0;
-  const yearlyAvg = years.size > 0 ? total / years.size : 0;
-  document.getElementById("sumTotal").textContent = fmtAmount(total);
-  document.getElementById("sumMonthly").textContent = fmtAmount(monthlyAvg);
-  document.getElementById("sumYearly").textContent = fmtAmount(yearlyAvg);
+  document.getElementById("incTotal").textContent   = fmtAmount(incTotal);
+  document.getElementById("incMonthly").textContent = fmtAmount(incMonths.size ? incTotal / incMonths.size : 0);
+  document.getElementById("incYearly").textContent  = fmtAmount(incYears.size ? incTotal / incYears.size : 0);
+  document.getElementById("expTotal").textContent    = fmtAmount(expTotal);
+  document.getElementById("expMonthly").textContent = fmtAmount(expMonths.size ? expTotal / expMonths.size : 0);
+  document.getElementById("expYearly").textContent  = fmtAmount(expYears.size ? expTotal / expYears.size : 0);
 }
 
 function applySummaryLabels() {
-  document.getElementById("lblTotal").textContent = summaryLabels.total || "Total";
+  document.getElementById("lblTotal").textContent   = summaryLabels.total || "Total";
   document.getElementById("lblMonthly").textContent = summaryLabels.monthly || "Monthly avg.";
-  document.getElementById("lblYearly").textContent = summaryLabels.yearly || "Yearly avg.";
+  document.getElementById("lblYearly").textContent  = summaryLabels.yearly || "Yearly avg.";
+  document.getElementById("lblIncome").textContent  = summaryLabels.income || "Income";
+  document.getElementById("lblExpense").textContent = summaryLabels.expense || "Expenses";
 }
 
 function renderTable(rows) {

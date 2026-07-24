@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  html, body { margin:0; padding:0; font-family: -apple-system, "Segoe UI", sans-serif; font-size: 14px; }
+  #root { position: relative; display: inline-block; width: 100%; }
+
+  #ddButton {
+    width: 100%; box-sizing: border-box;
+    background: #31333F; color: #fafafa;
+    border: 1px solid rgba(250,250,250,0.25); border-radius: 6px;
+    padding: 7px 12px; text-align: left; cursor: pointer;
+    display: flex; justify-content: space-between; align-items: center;
+    font-size: 14px;
+  }
+  #ddButton:hover { border-color: rgba(250,250,250,0.5); }
+  #ddButton .arrow { margin-left: 8px; opacity: 0.7; }
+
+  #ddPanel {
+    display: none;
+    position: absolute; top: calc(100% + 4px); left: 0;
+    min-width: 280px; max-width: 420px;
+    background: #fff; color: #222;
+    border: 1px solid #ccc; border-radius: 6px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+    z-index: 9999;
+    overflow: hidden;
+  }
+  #ddPanel.open { display: block; }
+
+  #ddSearch {
+    width: 100%; box-sizing: border-box;
+    border: none; border-bottom: 1px solid #ddd;
+    padding: 8px 10px; font-size: 13px; outline: none;
+  }
+  #ddAllRow {
+    display: flex; align-items: center; gap: 8px;
+    padding: 7px 10px; border-bottom: 1px solid #ddd;
+    font-weight: 600; cursor: pointer; user-select: none;
+  }
+  #ddList { max-height: 260px; overflow-y: auto; }
+  .dd-item {
+    display: flex; align-items: center; gap: 8px;
+    padding: 6px 10px; cursor: pointer; user-select: none;
+  }
+  .dd-item:hover { background: #f0f4fa; }
+  .dd-item.checked { background: #eaf2fe; }
+  .dd-item .txt { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .dd-empty { padding: 10px; color: #888; font-size: 13px; }
+</style>
+</head>
+<body>
+<div id="root">
+  <button id="ddButton" type="button">
+    <span id="ddButtonLabel">–</span>
+    <span class="arrow">▾</span>
+  </button>
+  <div id="ddPanel">
+    <input type="text" id="ddSearch" placeholder="Search…">
+    <div id="ddAllRow">
+      <input type="checkbox" id="ddAll">
+      <span id="ddAllLabel">Select all</span>
+    </div>
+    <div id="ddList"></div>
+  </div>
+</div>
+<script>
+let options = [];
+let selected = new Set();
+let initialized = false;
+let labels = {};
+let searchTerm = "";
+let seq = 0;
+
+function post(msg) {
+  msg.isStreamlitMessage = true;
+  window.parent.postMessage(msg, "*");
+}
+
+function setValue() {
+  seq += 1;
+  post({
+    type: "streamlit:setComponentValue",
+    value: {selected: Array.from(selected), seq: seq},
+    dataType: "json",
+  });
+}
+
+function setHeight() {
+  post({type: "streamlit:setFrameHeight", height: document.documentElement.scrollHeight});
+}
+
+function updateButtonLabel() {
+  const n = selected.size, m = options.length;
+  let text;
+  if (m === 0) {
+    text = labels.none_selected || "None";
+  } else if (n === m) {
+    text = (labels.all_selected || "All") + " (" + m + ")";
+  } else if (n === 0) {
+    text = labels.none_selected || "None";
+  } else {
+    text = n + "/" + m + " " + (labels.selected_suffix || "selected");
+  }
+  document.getElementById("ddButtonLabel").textContent = text;
+}
+
+function updateAllCheckbox() {
+  const allBox = document.getElementById("ddAll");
+  allBox.checked = options.length > 0 && selected.size === options.length;
+  allBox.indeterminate = selected.size > 0 && selected.size < options.length;
+}
+
+function renderList() {
+  const list = document.getElementById("ddList");
+  list.innerHTML = "";
+  const term = searchTerm.trim().toLowerCase();
+  const visible = options.filter(function(o) { return !term || o.toLowerCase().includes(term); });
+  if (visible.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "dd-empty";
+    empty.textContent = labels.no_matches || "No matches";
+    list.appendChild(empty);
+  }
+  visible.forEach(function(opt) {
+    const row = document.createElement("div");
+    row.className = "dd-item" + (selected.has(opt) ? " checked" : "");
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.checked = selected.has(opt);
+    const txt = document.createElement("span");
+    txt.className = "txt";
+    txt.textContent = opt;
+    row.appendChild(cb);
+    row.appendChild(txt);
+    row.addEventListener("click", function(e) {
+      e.stopPropagation();
+      if (selected.has(opt)) { selected.delete(opt); } else { selected.add(opt); }
+      renderList();
+      updateAllCheckbox();
+      updateButtonLabel();
+      setValue();
+    });
+    list.appendChild(row);
+  });
+  updateHeight();
+}
+
+function updateHeight() {
+  const panel = document.getElementById("ddPanel");
+  if (panel.classList.contains("open")) {
+    setTimeout(setHeight, 10);
+  } else {
+    setTimeout(setHeight, 10);
+  }
+}
+
+document.getElementById("ddAllRow").addEventListener("click", function() {
+  if (selected.size === options.length) {
+    selected = new Set();
+  } else {
+    selected = new Set(options);
+  }
+  renderList();
+  updateAllCheckbox();
+  updateButtonLabel();
+  setValue();
+});
+
+document.getElementById("ddSearch").addEventListener("input", function(e) {
+  searchTerm = e.target.value;
+  renderList();
+});
+document.getElementById("ddSearch").addEventListener("click", function(e) { e.stopPropagation(); });
+
+document.getElementById("ddButton").addEventListener("click", function() {
+  const panel = document.getElementById("ddPanel");
+  panel.classList.toggle("open");
+  if (panel.classList.contains("open")) {
+    document.getElementById("ddSearch").focus();
+  }
+  updateHeight();
+});
+
+document.addEventListener("click", function(e) {
+  const root = document.getElementById("root");
+  if (!root.contains(e.target)) {
+    document.getElementById("ddPanel").classList.remove("open");
+    updateHeight();
+  }
+});
+
+function onRender(args) {
+  options = args.options || [];
+  labels = args.labels || {};
+  document.getElementById("ddAllLabel").textContent = labels.select_all_row || "Select all";
+  document.getElementById("ddSearch").placeholder = labels.search_placeholder || "Search…";
+  if (!initialized) {
+    const initSel = (args.selected && args.selected.length) ? args.selected : options;
+    selected = new Set(initSel);
+    initialized = true;
+  } else {
+    selected = new Set(Array.from(selected).filter(function(o) { return options.indexOf(o) !== -1; }));
+  }
+  renderList();
+  updateAllCheckbox();
+  updateButtonLabel();
+  setTimeout(setHeight, 50);
+}
+
+let readyAcked = false;
+
+window.addEventListener("message", function(event) {
+  const msg = event.data;
+  if (!msg || !msg.type) return;
+  if (msg.type === "streamlit:render") {
+    readyAcked = true;
+    onRender(msg.args || {});
+  }
+});
+
+const readyTimer = setInterval(function() {
+  if (readyAcked) { clearInterval(readyTimer); return; }
+  post({type: "streamlit:componentReady", apiVersion: 1});
+}, 200);
+post({type: "streamlit:componentReady", apiVersion: 1});
+setHeight();
+</script>
+</body>
+</html>
